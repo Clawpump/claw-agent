@@ -1,30 +1,33 @@
 name: Publish @clawpump/claw-agent to npm
 
-# Publishes the npm installer (installer/) that bootstraps a full ClawPump
-# Hermes install via `npx @clawpump/claw-agent`. `npm publish` runs the
-# package's `prepack` (scripts/build-bundle.mjs), which bundles the agent fork
-# into installer/agent at publish time — no extra build step needed here.
+# Publishes the npm installer (installer/) — `npx @clawpump/claw-agent`.
+# `npm publish` runs the package's `prepack` (scripts/build-bundle.mjs), which
+# bundles the agent fork at publish time (no separate build step here).
 #
-# Setup (once): add a repo secret NPM_TOKEN = an npm "Automation" (or granular,
-# publish-scoped to @clawpump) access token. Then either publish a GitHub
-# Release, or run this workflow manually (Actions → Run workflow) with an
-# optional version bump.
+# Versioning is AUTOMATIC:
+#   • Manual run (Actions → Run workflow): auto-bumps the version (default
+#     `patch`), publishes, and commits the bump back to main. Just click run.
+#   • GitHub Release: uses the release tag (e.g. v0.2.0) as the version.
+#
+# Setup (once): add repo secret NPM_TOKEN = an npm "Automation" access token
+# (publish scope on @clawpump). Automation tokens skip the 2FA OTP prompt.
 
 on:
   release:
     types: [published]
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version bump for installer/ (patch|minor|major|x.y.z). Leave blank to publish package.json as-is."
-        required: false
-        default: ""
+      bump:
+        description: "Version bump"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write          # to commit the version bump back to main
     steps:
       - uses: actions/checkout@v4
 
@@ -33,13 +36,29 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Bump version (manual runs only, if provided)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.version != '' }}
+      - name: Set version (auto-bump or release tag)
+        id: ver
         working-directory: installer
-        run: npm version "${{ inputs.version }}" --no-git-tag-version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            V="${{ github.event.release.tag_name }}"; V="${V#v}"
+            npm version "$V" --no-git-tag-version --allow-same-version
+          else
+            npm version "${{ inputs.bump }}" --no-git-tag-version
+          fi
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Publish to npm
         working-directory: installer
         run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Commit version bump back to main (manual runs)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add installer/package.json
+          git commit -m "chore(release): @clawpump/claw-agent v${{ steps.ver.outputs.version }} [skip ci]" || echo "nothing to commit"
+          git push || echo "push skipped (protected branch?) — version still published"
