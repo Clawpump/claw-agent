@@ -1,0 +1,5 @@
+# Built at publish time by scripts/build-bundle.mjs (the bundled agent fork).
+# Not committed — it's a large build artifact regenerated on `npm pack`/`publish`.
+agent/
+node_modules/
+*.tgz

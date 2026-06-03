@@ -1,0 +1,37 @@
+{
+  "name": "claw-agent",
+  "version": "0.1.0",
+  "description": "Install and run your own ClawPump Hermes agent — Solana AI agents, trading, Phoenix perps, DCA, lending, token launch & DeFi. Built on Hermes (Nous Research, MIT).",
+  "type": "module",
+  "bin": {
+    "claw-agent": "bin/cli.mjs"
+  },
+  "files": [
+    "bin/",
+    "agent/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node scripts/build-bundle.mjs",
+    "prepack": "node scripts/build-bundle.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "homepage": "https://clawpump.tech",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Clawpump/claw-agent.git"
+  },
+  "keywords": [
+    "clawpump",
+    "hermes",
+    "ai-agent",
+    "solana",
+    "defi",
+    "trading",
+    "mcp",
+    "installer"
+  ]
+}
