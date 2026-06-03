@@ -1,6 +1,9 @@
 {
-  "name": "claw-agent",
+  "name": "@clawpump/claw-agent",
   "version": "0.1.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "Install and run your own ClawPump Hermes agent — Solana AI agents, trading, Phoenix perps, DCA, lending, token launch & DeFi. Built on Hermes (Nous Research, MIT).",
   "type": "module",
   "bin": {

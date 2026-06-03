@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // claw-agent — one-command installer for your ClawPump Hermes agent.
 //
-//   npx claw-agent
+//   npx @clawpump/claw-agent
 //
 // Bundles the agent (this npm package contains it), installs uv + Python 3.11,
 // builds an isolated venv, installs the agent, and drops a `claw` launcher on
@@ -150,7 +150,7 @@ function main() {
   log(`    ${C.lg}claw clawpump setup${C.r}   ${C.dim}# browser login → all ClawPump tools${C.r}`);
   log(`    ${C.lg}claw${C.r}                  ${C.dim}# start chatting${C.r}`);
   log();
-  log(`  ${C.dim}Update later:  npx claw-agent@latest${C.r}`);
+  log(`  ${C.dim}Update later:  npx @clawpump/claw-agent@latest${C.r}`);
   log();
 }
 

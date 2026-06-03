@@ -6,7 +6,7 @@ and DeFi. Built on [Hermes Agent](https://github.com/NousResearch/hermes-agent)
 by Nous Research (MIT).
 
 ```bash
-npx claw-agent
+npx @clawpump/claw-agent
 ```
 
 That's it. The installer:
@@ -26,7 +26,7 @@ claw                    # start chatting
 Update any time:
 
 ```bash
-npx claw-agent@latest
+npx @clawpump/claw-agent@latest
 ```
 
 ## Notes
