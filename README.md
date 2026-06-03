@@ -1,4 +1,33 @@
 <p align="center">
+  <img src="assets/clawpump-logo.webp" alt="ClawPump" width="170">
+</p>
+
+<h1 align="center">ClawPump Agent 🦀</h1>
+
+<p align="center">
+  <b>A self-improving AI agent for Solana — launch tokens, trade, run Phoenix perps, DCA, lend, and manage agents — built on <a href="https://github.com/NousResearch/hermes-agent">Hermes</a> by <a href="https://nousresearch.com">Nous Research</a>.</b>
+</p>
+
+<p align="center">
+  <a href="https://agents.clawpump.tech">Dashboard</a> ·
+  <a href="https://agents.clawpump.tech/dashboard/api">Get an API key</a> ·
+  <a href="https://mcp.clawpump.tech/mcp">MCP endpoint</a> ·
+  <a href="https://github.com/NousResearch/hermes-agent">Upstream: Hermes</a>
+</p>
+
+ClawPump's full feature set — **104 MCP tools** spanning agents, trading, Phoenix perps, DCA, Jupiter lending, token launch, marketplace, predictions, and market intelligence — is wired in natively. One command:
+
+```bash
+hermes clawpump setup     # pick remote OAuth (browser) or stdio (cpk_ key)
+```
+
+That pairs the agent with the ClawPump MCP — remote `https://mcp.clawpump.tech/mcp`, or the local `npx @clawpump/agents` stdio path — and the ClawPump green theme is on by default. See the [ClawPump skill](skills/clawpump/SKILL.md) and the catalog entries under [`optional-mcps/`](optional-mcps/) (`clawpump`, `clawpump-stdio`).
+
+> **Built on Hermes.** ClawPump is a downstream distribution of the **Hermes Agent** by **Nous Research**, used under the MIT License. The upstream agent — its runtime, docs, and features — is unchanged below; ClawPump adds the native ClawPump MCP integration plus init/theme branding on top. Full credit for the underlying agent goes to Nous Research. See [`LICENSE`](LICENSE).
+
+---
+
+<p align="center">
   <img src="assets/banner.png" alt="Hermes Agent" width="100%">
 </p>
 

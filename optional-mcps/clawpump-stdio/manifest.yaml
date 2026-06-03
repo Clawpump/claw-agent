@@ -1,0 +1,141 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: clawpump-stdio
+description: ClawPump (stdio) — the same 104 tools via the npm package, authed with a cpk_* API key (no browser).
+source: https://www.npmjs.com/package/@clawpump/agents
+
+# Same tool surface as the `clawpump` remote entry, but run locally over stdio
+# via the published npm package. Requires Node.js / npx on PATH. The cpk_* key
+# is read from CLAWPUMP_API_KEY and sent directly as a Bearer token to the
+# ClawPump backend — no OAuth, no browser. Prefer this when you already hold a
+# cpk_* key and don't want the browser flow; prefer `clawpump` otherwise.
+transport:
+  type: stdio
+  command: npx
+  args:
+    - "-y"
+    - "@clawpump/agents"
+
+auth:
+  type: api_key
+  env:
+    - name: CLAWPUMP_API_KEY
+      prompt: "ClawPump API key (cpk_…, create at https://agents.clawpump.tech/dashboard/api)"
+      required: true
+      secret: true
+    - name: CLAWPUMP_DEFAULT_AGENT
+      prompt: "Default agent id (optional — skips agent-selection prompts)"
+      required: false
+      secret: false
+      default: ""
+
+# Same read-mostly default as the remote `clawpump` entry: 76 safe tools
+# pre-checked; the 28 financial/irreversible tools are opt-in. See the
+# `clawpump` manifest for the rationale (Hermes does not auto-gate MCP tools
+# by destructiveHint).
+tools:
+  default_enabled:
+    # account
+    - get_account_status
+    - connect_twitter
+    - configure_twitter_posting
+    - get_dashboard_urls
+    - generate_link_code
+    - link_google_account
+    # agents
+    - list_agents
+    - get_agent
+    - create_agent
+    - update_agent
+    - upload_agent_avatar
+    - get_agent_asset_url
+    - list_available_skills
+    # automations
+    - list_automations
+    - get_automation
+    - create_automation
+    - update_automation
+    - trigger_automation
+    # billing / wallet
+    - get_balance
+    - get_usage
+    - get_transactions
+    - get_wallet_summaries
+    - get_wallet_history
+    - sync_billing
+    - get_usage_history
+    - get_private_wallet_balance
+    - get_balance_history
+    - get_budget
+    # chat
+    - chat_with_agent
+    - get_chat_history
+    - get_free_tier_status
+    # integrations
+    - list_integrations
+    - save_integration
+    - get_linked_accounts
+    # market intelligence
+    - intelligence_capabilities
+    - intelligence_market
+    - intelligence_signals
+    - intelligence_macro
+    - intelligence_perps
+    # lending (read-only views)
+    - jup_lend_tokens
+    - jup_lend_positions
+    # marketplace (browse / read)
+    - browse_marketplace
+    - create_marketplace_listing
+    - browse_public_agents
+    - get_my_bids
+    - get_received_bids
+    - get_marketplace_history
+    # perps (read / preview only)
+    - perps_markets
+    - perps_market_data
+    - perps_account
+    - perps_order_preview
+    # predictions (read-only views)
+    - predictions_events
+    - predictions_positions
+    # autonomous runs
+    - list_agent_runs
+    - create_agent_run
+    - update_agent_run
+    - get_agent_run_steps
+    # custom skills
+    - list_custom_skills
+    - get_custom_skill
+    - create_custom_skill
+    - update_custom_skill
+    # token launch (status only by default)
+    - get_launch_status
+    # trading (quotes / reads)
+    - swap_quote
+    - token_search
+    - get_portfolio
+    - get_price
+    - get_market_signals
+    - get_indicators
+    - dca_list
+    - limit_order_history
+    - arbitrage_quote
+    - arbitrage_prices
+    # utility
+    - get_model_catalog
+    - get_news_feed
+    # whitelist
+    - get_whitelist
+    - add_to_whitelist
+
+post_install: |
+  Requires Node.js / npx on PATH. Your cpk_* key is stored in ~/.hermes/.env
+  and sent directly as a Bearer token to the ClawPump backend — no browser.
+
+  Financial / irreversible tools are OFF by default. Enable the ones you want:
+    hermes mcp configure clawpump-stdio
+
+  Start a new Hermes session to load the ClawPump tools.

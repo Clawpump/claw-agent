@@ -11457,7 +11457,7 @@ def cmd_logs(args):
 # to parse.
 _BUILTIN_SUBCOMMANDS = frozenset(
     {
-        "acp", "auth", "backup", "bundles", "checkpoints", "claw", "completion",
+        "acp", "auth", "backup", "bundles", "checkpoints", "claw", "clawpump", "completion",
         "computer-use",
         "config", "cron", "curator", "dashboard", "debug", "doctor",
         "dump", "fallback", "gateway", "hooks", "import", "insights",
@@ -12752,6 +12752,12 @@ def main():
     # =========================================================================
     from hermes_cli.portal_cli import add_parser as _add_portal_parser
     _add_portal_parser(subparsers)
+
+    # =========================================================================
+    # clawpump command — ClawPump MCP install / auth / tool selection
+    # =========================================================================
+    from hermes_cli.clawpump_cli import add_parser as _add_clawpump_parser
+    _add_clawpump_parser(subparsers)
 
     # =========================================================================
     # kanban command — multi-profile collaboration board

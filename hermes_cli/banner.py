@@ -54,6 +54,15 @@ def _skin_color(key: str, fallback: str) -> str:
         return get_active_skin().get_color(key, fallback)
     except Exception:
         return fallback
+
+
+def _skin_branding(key: str, fallback: str) -> str:
+    """Get a branding string from the active skin, or return fallback."""
+    try:
+        from hermes_cli.skin_engine import get_active_skin
+        return get_active_skin().get_branding(key, fallback)
+    except Exception:
+        return fallback
 # =========================================================================
 # ASCII Art & Branding
 # =========================================================================
@@ -403,7 +412,8 @@ def get_latest_release_tag(repo_dir: Optional[Path] = None) -> Optional[tuple]:
 
 def format_banner_version_label() -> str:
     """Return the version label shown in the startup banner title."""
-    base = f"Hermes Agent v{VERSION} ({RELEASE_DATE})"
+    agent_name = _skin_branding("agent_name", "Hermes Agent")
+    base = f"{agent_name} v{VERSION} ({RELEASE_DATE})"
     state = get_git_banner_state()
     if not state:
         return base
@@ -542,7 +552,13 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
     if len(model_short) > 28:
         model_short = model_short[:25] + "..."
     ctx_str = f" [dim {dim}]·[/] [dim {dim}]{_format_context_length(context_length)} context[/]" if context_length else ""
-    left_lines.append(f"[{accent}]{model_short}[/]{ctx_str} [dim {dim}]·[/] [dim {dim}]Nous Research[/]")
+    org = _skin_branding("org", "Nous Research")
+    left_lines.append(f"[{accent}]{model_short}[/]{ctx_str} [dim {dim}]·[/] [dim {dim}]{org}[/]")
+    # Fork/attribution credit line (e.g. ClawPump's "built on Hermes by Nous
+    # Research"). Empty for the default skin, so the stock banner is unchanged.
+    _credit = _skin_branding("credit", "")
+    if _credit:
+        left_lines.append(f"[dim {dim}]{_credit}[/]")
 
     if os.getenv("HERMES_YOLO_MODE"):
         left_lines.append(f"[bold red]⚠ YOLO mode[/] [dim {dim}]— all approval prompts bypassed[/]")

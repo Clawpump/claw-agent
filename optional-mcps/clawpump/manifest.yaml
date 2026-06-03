@@ -1,0 +1,152 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: clawpump
+description: ClawPump — Solana AI agents, trading, perps, DCA, token launch, marketplace, lending, predictions, market intelligence (104 tools).
+source: https://mcp.clawpump.tech
+
+# ClawPump ships a remote MCP server: Streamable HTTP + native OAuth 2.1 +
+# Dynamic Client Registration + PKCE S256 (the same shape as Linear). Hermes's
+# MCP client + mcp_oauth_manager handle discovery, registration, the browser
+# flow, token exchange, and refresh — nothing to install locally.
+#
+# On first connect a browser opens to ClawPump's /authorize page where you
+# paste your `cpk_*` API key (create one at
+# https://agents.clawpump.tech/dashboard/api). The key is AES-256-GCM encrypted
+# inside the OAuth tokens, so Hermes only ever holds an opaque bearer token.
+transport:
+  type: http
+  # TEMP (Option B testing): the custom domain mcp.clawpump.tech has no DNS
+  # record yet (NXDOMAIN), so point at the live Railway domain. Switch back to
+  # https://mcp.clawpump.tech/mcp once the CNAME is configured.
+  url: https://clawpump-mcp-production.up.railway.app/mcp
+
+auth:
+  type: oauth
+  # No `provider:` — this is native MCP OAuth (case 1), not a third-party
+  # provider like Google. The MCP client triggers the browser flow on the
+  # first probe / first connect.
+
+# Tool selection at install time.
+# ClawPump exposes 104 tools; 28 of them move real funds or are irreversible
+# (perps orders, swaps, DCA/limit orders, lending deposit/withdraw, prediction
+# positions, marketplace bids, external-wallet changes, token launches).
+# Hermes does NOT auto-gate MCP tools by their destructiveHint, so we ship a
+# read-mostly default: the 76 safe tools below are pre-checked in the install
+# checklist (and applied directly if the server can't be probed before auth).
+# Users opt into the financial tools per their threat model in the checklist,
+# or later with `hermes mcp configure clawpump`.
+tools:
+  default_enabled:
+    # account
+    - get_account_status
+    - connect_twitter
+    - configure_twitter_posting
+    - get_dashboard_urls
+    - generate_link_code
+    - link_google_account
+    # agents
+    - list_agents
+    - get_agent
+    - create_agent
+    - update_agent
+    - upload_agent_avatar
+    - get_agent_asset_url
+    - list_available_skills
+    # automations
+    - list_automations
+    - get_automation
+    - create_automation
+    - update_automation
+    - trigger_automation
+    # billing / wallet (all read/sync)
+    - get_balance
+    - get_usage
+    - get_transactions
+    - get_wallet_summaries
+    - get_wallet_history
+    - sync_billing
+    - get_usage_history
+    - get_private_wallet_balance
+    - get_balance_history
+    - get_budget
+    # chat
+    - chat_with_agent
+    - get_chat_history
+    - get_free_tier_status
+    # integrations
+    - list_integrations
+    - save_integration
+    - get_linked_accounts
+    # market intelligence
+    - intelligence_capabilities
+    - intelligence_market
+    - intelligence_signals
+    - intelligence_macro
+    - intelligence_perps
+    # lending (read-only views)
+    - jup_lend_tokens
+    - jup_lend_positions
+    # marketplace (browse / read)
+    - browse_marketplace
+    - create_marketplace_listing
+    - browse_public_agents
+    - get_my_bids
+    - get_received_bids
+    - get_marketplace_history
+    # perps (read / preview only)
+    - perps_markets
+    - perps_market_data
+    - perps_account
+    - perps_order_preview
+    # predictions (read-only views)
+    - predictions_events
+    - predictions_positions
+    # autonomous runs
+    - list_agent_runs
+    - create_agent_run
+    - update_agent_run
+    - get_agent_run_steps
+    # custom skills
+    - list_custom_skills
+    - get_custom_skill
+    - create_custom_skill
+    - update_custom_skill
+    # token launch (status only by default)
+    - get_launch_status
+    # trading (quotes / reads — execution opt-in)
+    - swap_quote
+    - token_search
+    - get_portfolio
+    - get_price
+    - get_market_signals
+    - get_indicators
+    - dca_list
+    - limit_order_history
+    - arbitrage_quote
+    - arbitrage_prices
+    # utility
+    - get_model_catalog
+    - get_news_feed
+    # whitelist
+    - get_whitelist
+    - add_to_whitelist
+
+post_install: |
+  On first connection Hermes opens a browser to ClawPump — log in and it
+  connects automatically (no key to copy). You can still paste a cpk_* key
+  manually if you prefer (create one at https://agents.clawpump.tech/dashboard/api).
+  After authorizing, restart your Hermes session so the ClawPump tools load.
+
+  Quickest path:  hermes clawpump setup
+
+  FINANCIAL / IRREVERSIBLE TOOLS are OFF by default (perps_*, swap_execute,
+  dca_create, limit_order_create, jup_lend_deposit/withdraw, predictions_open/
+  close, place_bid / accept_marketplace_bid, set_external_wallet, and the
+  token-launch tools). Several require confirmRisk=true / confirm_launch=true.
+  Enable the ones you want and review every call:
+    hermes mcp configure clawpump
+
+  Re-authenticate (browser) any time with:
+    hermes mcp login clawpump

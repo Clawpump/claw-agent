@@ -196,6 +196,87 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
         },
         "tool_prefix": "┊",
     },
+    "clawpump": {
+        "name": "clawpump",
+        "description": "ClawPump — Solana green, claw mark (built on Hermes)",
+        "colors": {
+            "banner_border": "#16A34A",
+            "banner_title": "#4ADE80",
+            "banner_accent": "#22C55E",
+            "banner_dim": "#15803D",
+            "banner_text": "#DCFCE7",
+            "ui_accent": "#22C55E",
+            "ui_label": "#4ADE80",
+            "ui_ok": "#22C55E",
+            "ui_error": "#ef5350",
+            "ui_warn": "#ffa726",
+            "prompt": "#DCFCE7",
+            "input_rule": "#16A34A",
+            "response_border": "#4ADE80",
+            "status_bar_bg": "#0B1F14",
+            "status_bar_text": "#DCFCE7",
+            "status_bar_strong": "#4ADE80",
+            "status_bar_dim": "#3F6B50",
+            "status_bar_good": "#22C55E",
+            "status_bar_warn": "#FACC15",
+            "status_bar_bad": "#F59E0B",
+            "status_bar_critical": "#EF5350",
+            "session_label": "#4ADE80",
+            "session_border": "#3F6B50",
+            "selection_bg": "#14532D",
+            "completion_menu_bg": "#06140C",
+            "completion_menu_current_bg": "#14532D",
+            "completion_menu_meta_bg": "#0B1F14",
+            "completion_menu_meta_current_bg": "#14532D",
+        },
+        "spinner": {
+            "waiting_faces": ["(◴)", "(◷)", "(◶)", "(◵)", "(<>)"],
+            "thinking_faces": ["(✦)", "(◇)", "(◈)", "(⌁)", "(<>)"],
+            "thinking_verbs": [
+                "pumping", "launching", "scanning the mints", "routing the swap",
+                "reading the chart", "minting", "snapping the claw", "checking liquidity",
+            ],
+            "wings": [
+                ["⟪◇", "◇⟫"],
+                ["⟪✦", "✦⟫"],
+                ["⟪>", "<⟫"],
+                ["⟪◈", "◈⟫"],
+            ],
+        },
+        "branding": {
+            "agent_name": "ClawPump",
+            "org": "ClawPump",
+            "credit": "built on Hermes ☤ by Nous Research",
+            "welcome": "Welcome to ClawPump 🦀 — Solana agents, trading & token launch. Type your message or /help for commands.",
+            "goodbye": "Claws out! 🦀",
+            "response_label": " ✦ ClawPump ",
+            "prompt_symbol": "❯",
+            "help_header": "(✦) Available Commands",
+        },
+        "tool_prefix": "┊",
+        "banner_logo": """[bold #86EFAC] ██████╗██╗      █████╗ ██╗    ██╗██████╗ ██╗   ██╗███╗   ███╗██████╗ [/]
+[bold #4ADE80]██╔════╝██║     ██╔══██╗██║    ██║██╔══██╗██║   ██║████╗ ████║██╔══██╗[/]
+[#22C55E]██║     ██║     ███████║██║ █╗ ██║██████╔╝██║   ██║██╔████╔██║██████╔╝[/]
+[#16A34A]██║     ██║     ██╔══██║██║███╗██║██╔═══╝ ██║   ██║██║╚██╔╝██║██╔═══╝ [/]
+[#15803D]╚██████╗███████╗██║  ██║╚███╔███╔╝██║     ╚██████╔╝██║ ╚═╝ ██║██║     [/]
+[#166534] ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚═╝      ╚═════╝ ╚═╝     ╚═╝╚═╝     [/]""",
+        "banner_hero": """[#86EFAC]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠠⣀⣂⣤⣤⣤⣤⣤⣤⠄[/]
+[#7EE5A4]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣢⣵⣾⣿⣿⣿⣿⣿⣿⣿⡿⠃⠀[/]
+[#77DA9B]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣴⠿⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠀⠀⠀[/]
+[#6FD093]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣾⠟⠁⢀⣼⣿⣿⣿⣿⣿⣿⣿⡿⠀⠀⠀⠀⠀[/]
+[#68C58A]⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣜⡿⠁⢀⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⠗⠀⠀⠀⠀⠀[/]
+[#60BB82]⠀⠀⠀⠀⠀⠀⠀⠀⢀⣮⣿⣇⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠁⠀⠀⠀⠀⠀⠀[/]
+[#58B179]⠀⠀⠀⠀⠀⠀⠀⢠⣿⣿⠃⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀[/]
+[#51A671]⠀⠀⠀⠀⠀⠀⢀⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠃⠀⠀⠀⠀⠀⠀⠀[/]
+[#499C68]⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
+[#429160]⠀⠀⠀⠀⠀⣀⣈⡙⠻⢿⣿⣿⣿⣿⣿⣿⡿⠋⣡⣤⣤⠀⠀⠀⠀⠀⠐⢀⣠⣴[/]
+[#3A8757]⠀⠀⠀⢀⣞⣿⠟⠉⣷⣦⣌⠙⢿⣿⣿⣿⣠⣾⣿⣿⣿⣷⣷⣶⣶⣶⣿⣿⣿⠃[/]
+[#327D4F]⠀⠀⣀⣉⡛⠳⢴⣾⣿⣿⣿⣷⣄⠹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠁⠀[/]
+[#2B7246]⢠⣞⣿⡟⣩⣿⣶⣌⠻⢿⣿⣿⣿⣆⠘⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋⠀⠀⠀[/]
+[#23683E]⠀⠉⠙⠻⢿⣿⣿⣿⣷⣄⠻⣿⣿⣿⡀⠹⢿⣿⣿⣿⣿⠿⠟⠋⠁⠀⠀⠀⠀⠀[/]
+[#1C5D35]⠀⠀⠀⠀⠀⠈⠻⣿⣿⣿⣆⠹⣿⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
+[#14532D]⠀⠀⠀⠀⠀⠀⠀⠘⢿⣿⠟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]""",
+    },
     "ares": {
         "name": "ares",
         "description": "War-god theme — crimson and bronze",
@@ -650,7 +731,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
 # =============================================================================
 
 _active_skin: Optional[SkinConfig] = None
-_active_skin_name: str = "default"
+_active_skin_name: str = "clawpump"
 
 
 def _skins_dir() -> Path:
@@ -795,11 +876,11 @@ def init_skin_from_config(config: dict) -> None:
     display = config.get("display") or {}
     if not isinstance(display, dict):
         display = {}
-    skin_name = display.get("skin", "default")
+    skin_name = display.get("skin", "clawpump")
     if isinstance(skin_name, str) and skin_name.strip():
         set_active_skin(skin_name.strip())
     else:
-        set_active_skin("default")
+        set_active_skin("clawpump")
 
 
 # =============================================================================
