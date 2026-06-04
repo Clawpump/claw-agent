@@ -531,6 +531,33 @@ def _resolve_kimi_base_url(api_key: str, default_url: str, env_override: str) ->
     return default_url
 
 
+# =============================================================================
+# UsePod Endpoint Derivation
+# =============================================================================
+
+# UsePod (usepod.ai) is a drop-in OpenAI-compatible proxy that authenticates by
+# the token embedded in the request PATH — ``/proxy/<token>/v1/...`` — and
+# ignores the Authorization header. The inference base URL is therefore derived
+# from the API key (the token) rather than stored as a static endpoint, so the
+# user only ever needs to paste their token.
+USEPOD_API_BASE = "https://api.usepod.ai"
+
+
+def _resolve_usepod_base_url(api_key: str, env_override: str = "") -> str:
+    """Return the UsePod proxy base URL for *api_key* (the token).
+
+    An explicit ``USEPOD_BASE_URL`` (``env_override``) always wins — e.g. for a
+    self-hosted UsePod gateway. With no token yet, return the proxy root so
+    callers degrade gracefully instead of producing a malformed URL.
+    """
+    if env_override:
+        return env_override.rstrip("/")
+    token = (api_key or "").strip()
+    if not token:
+        return f"{USEPOD_API_BASE}/proxy"
+    return f"{USEPOD_API_BASE}/proxy/{token}/v1"
+
+
 
 _PLACEHOLDER_SECRET_VALUES = {
     "*",
@@ -5657,6 +5684,8 @@ def get_api_key_provider_status(provider_id: str) -> Dict[str, Any]:
 
     if provider_id in {"kimi-coding", "kimi-coding-cn"}:
         base_url = _resolve_kimi_base_url(api_key, pconfig.inference_base_url, env_url)
+    elif provider_id == "usepod":
+        base_url = _resolve_usepod_base_url(api_key, env_url)
     elif env_url:
         base_url = env_url
     else:
@@ -5848,6 +5877,8 @@ def resolve_api_key_provider_credentials(provider_id: str) -> Dict[str, Any]:
         base_url = _resolve_kimi_base_url(api_key, pconfig.inference_base_url, env_url)
     elif provider_id == "zai":
         base_url = _resolve_zai_base_url(api_key, pconfig.inference_base_url, env_url)
+    elif provider_id == "usepod":
+        base_url = _resolve_usepod_base_url(api_key, env_url)
     elif env_url:
         base_url = env_url.rstrip("/")
     else:

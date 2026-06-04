@@ -368,6 +368,19 @@ def _resolve_runtime_from_pool_entry(
         # For Anthropic-style endpoints, strip /v1 suffix
         if api_mode == "anthropic_messages":
             base_url = re.sub(r"/v1/?$", "", base_url)
+    elif provider == "usepod":
+        # UsePod authenticates by the token in the URL path, so the pool
+        # entry's base_url is only the proxy root — derive the real per-token
+        # base URL from the resolved key. A config base_url or USEPOD_BASE_URL
+        # (self-hosted gateway) still wins.
+        from hermes_cli.auth import _resolve_usepod_base_url
+        cfg_provider = str(model_cfg.get("provider") or "").strip().lower()
+        cfg_base_url = ""
+        if cfg_provider == "usepod":
+            cfg_base_url = str(model_cfg.get("base_url") or "").strip().rstrip("/")
+        env_override = os.getenv("USEPOD_BASE_URL", "").strip()
+        base_url = cfg_base_url or _resolve_usepod_base_url(api_key, env_override).rstrip("/")
+        api_mode = "chat_completions"
     else:
         configured_provider = str(model_cfg.get("provider") or "").strip().lower()
         # Honour model.base_url from config.yaml when the configured provider
@@ -1165,6 +1178,11 @@ def _resolve_explicit_runtime(
             if provider in {"kimi-coding", "kimi-coding-cn"}:
                 creds = resolve_api_key_provider_credentials(provider)
                 base_url = creds.get("base_url", "").rstrip("/")
+            elif provider == "usepod":
+                # UsePod embeds the token in the URL path; defer base_url until
+                # the token is resolved below so it always reflects the current
+                # key (covers explicit --api-key overrides too).
+                base_url = ""
             else:
                 base_url = env_url or pconfig.inference_base_url
 
@@ -1174,6 +1192,12 @@ def _resolve_explicit_runtime(
             api_key = creds.get("api_key", "")
             if not base_url:
                 base_url = creds.get("base_url", "").rstrip("/")
+
+        if provider == "usepod" and not explicit_base_url:
+            # Derive the proxy base URL from the resolved token. An explicit
+            # --base-url (or USEPOD_BASE_URL, carried via env_url) still wins.
+            from hermes_cli.auth import _resolve_usepod_base_url
+            base_url = _resolve_usepod_base_url(api_key, env_url).rstrip("/")
 
         api_mode = "chat_completions"
         if provider == "copilot":

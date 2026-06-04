@@ -5806,19 +5806,31 @@ def _model_flow_api_key_provider(config, provider_id, current_model=""):
             pass
     effective_base = current_base or pconfig.inference_base_url
 
-    try:
-        override = input(f"Base URL [{effective_base}]: ").strip()
-    except (KeyboardInterrupt, EOFError):
-        print()
-        override = ""
-    if override and base_url_env:
-        if not override.startswith(("http://", "https://")):
-            print(
-                "  Invalid URL — must start with http:// or https://. Keeping current value."
-            )
-        else:
-            save_env_value(base_url_env, override)
-            effective_base = override
+    if provider_id == "usepod":
+        # UsePod authenticates by the token embedded in the URL path, so there
+        # is no base URL for the user to type — it is derived from the pasted
+        # key. Skip the prompt; honour USEPOD_BASE_URL only for self-hosting.
+        from hermes_cli.auth import _resolve_usepod_base_url
+
+        key_for_probe = existing_key or (get_env_value(key_env) if key_env else "")
+        env_override = ""
+        if base_url_env:
+            env_override = get_env_value(base_url_env) or os.getenv(base_url_env, "")
+        effective_base = _resolve_usepod_base_url(key_for_probe, env_override)
+    else:
+        try:
+            override = input(f"Base URL [{effective_base}]: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            override = ""
+        if override and base_url_env:
+            if not override.startswith(("http://", "https://")):
+                print(
+                    "  Invalid URL — must start with http:// or https://. Keeping current value."
+                )
+            else:
+                save_env_value(base_url_env, override)
+                effective_base = override
 
     # Model selection — resolution order:
     #   1. models.dev registry (cached, filtered for agentic/tool-capable models)
@@ -5857,6 +5869,22 @@ def _model_flow_api_key_provider(config, provider_id, current_model=""):
         )
         if model_list:
             print(f"  Found {len(model_list)} model(s) from Ollama Cloud")
+    elif provider_id == "usepod":
+        from hermes_cli.models import fetch_api_models
+        from providers import get_provider_profile
+
+        api_key_for_probe = existing_key or (get_env_value(key_env) if key_env else "")
+        live_models = fetch_api_models(api_key_for_probe, effective_base)
+        if live_models:
+            model_list = live_models
+            print(f"  Found {len(model_list)} model(s) from {pconfig.name} API")
+        else:
+            _pp = get_provider_profile("usepod")
+            model_list = list(getattr(_pp, "fallback_models", ()) or [])
+            if model_list:
+                print(
+                    f'  Showing {len(model_list)} curated models — use "Enter custom model name" for others.'
+                )
     elif provider_id == "novita":
         from hermes_cli.models import fetch_api_models
 
@@ -5964,7 +5992,13 @@ def _model_flow_api_key_provider(config, provider_id, current_model=""):
             model = {"default": model} if model else {}
             cfg["model"] = model
         model["provider"] = provider_id
-        model["base_url"] = effective_base
+        if provider_id == "usepod":
+            # The effective base URL embeds the token; persisting it would bake
+            # the secret into config.yaml and go stale on key rotation. Runtime
+            # always re-derives it from the current USEPOD_API_KEY.
+            model.pop("base_url", None)
+        else:
+            model["base_url"] = effective_base
         if provider_id in {"opencode-zen", "opencode-go"}:
             model["api_mode"] = opencode_model_api_mode(provider_id, selected)
         else:
