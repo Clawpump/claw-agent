@@ -12,7 +12,8 @@
   "files": [
     "bin/",
     "agent/",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "node scripts/build-bundle.mjs",
