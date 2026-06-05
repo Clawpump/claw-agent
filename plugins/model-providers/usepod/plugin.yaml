@@ -2,4 +2,4 @@ name: usepod-provider
 kind: model-provider
 version: 1.0.0
 description: UsePod (drop-in OpenAI-compatible inference marketplace)
-author: Clawpump
+author: "@0xgilbert"
