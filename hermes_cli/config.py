@@ -741,23 +741,7 @@ DEFAULT_CONFIG = {
     "fallback_providers": [],
     "credential_pool_strategies": {},
     "toolsets": ["hermes-cli"],
-    # ClawPump is enabled by default in this distribution: the remote MCP
-    # server (the full ClawPump tool surface) comes pre-wired. On first connect
-    # Hermes opens a browser to log in to ClawPump — that one step is per-user
-    # auth and cannot be skipped — after which the mcp_clawpump_* tools load
-    # automatically. The bundled `clawpump` skill requires explicit user
-    # confirmation before any financial/irreversible tool runs. Prune the tool
-    # set any time with `hermes mcp configure clawpump`.
-    "mcp_servers": {
-        "clawpump": {
-            # TODO: switch to https://mcp.clawpump.tech/mcp once the DNS CNAME
-            # is configured; the custom domain is currently NXDOMAIN, so point
-            # at the live Railway domain so a fresh install connects.
-            "url": "https://clawpump-mcp-production.up.railway.app/mcp",
-            "auth": "oauth",
-            "enabled": True,
-        },
-    },
+    "mcp_servers": {},
     "agent": {
         "max_turns": 90,
         # Inactivity timeout for gateway agent execution (seconds).
@@ -1337,7 +1321,7 @@ DEFAULT_CONFIG = {
         # failure isn't silent from the UI's perspective.  Set false to suppress.
         "turn_completion_explainer": True,
         "show_cost": False,       # Show $ cost in the status bar (off by default)
-        "skin": "clawpump",       # ClawPump brand (green claw). Switch with /skin or display.skin.
+        "skin": "default",       # distribution default (clawpump) applied via distribution.apply_config_overlay
         # UI language for static user-facing messages (approval prompts, a
         # handful of gateway slash-command replies).  Does NOT affect agent
         # responses, log lines, tool outputs, or slash-command descriptions.
@@ -3395,37 +3379,20 @@ OPTIONAL_ENV_VARS = {
         "password": False,
         "category": "setting",
     },
-
-    # ── ClawPump (Solana token launch, trading, perps, DeFi) ──
-    # Used by the stdio ClawPump MCP path (`npx @clawpump/agents`, catalog
-    # entry `clawpump-stdio`). The remote OAuth path (`clawpump`) stores
-    # per-user tokens under ~/.hermes/mcp-tokens/ instead and needs no key
-    # here. The ClawPump tools themselves come from the MCP server, not the
-    # native registry, so there's no `tools` list.
-    "CLAWPUMP_API_KEY": {
-        "description": "ClawPump API key (cpk_*) for the ClawPump MCP stdio transport",
-        "prompt": "ClawPump API key (cpk_…)",
-        "url": "https://agents.clawpump.tech/dashboard/api",
-        "password": True,
-        "category": "tools",
-    },
-    "CLAWPUMP_API_URL": {
-        "description": "ClawPump backend URL override (advanced — leave empty for the default)",
-        "prompt": "ClawPump backend URL (leave empty for default)",
-        "url": None,
-        "password": False,
-        "category": "tools",
-        "advanced": True,
-    },
-    "CLAWPUMP_DEFAULT_AGENT": {
-        "description": "Default ClawPump agent id (optional — skips agent-selection prompts)",
-        "prompt": "Default ClawPump agent id (optional)",
-        "url": None,
-        "password": False,
-        "category": "tools",
-        "advanced": True,
-    },
 }
+
+# ── ClawPump distribution overlay (downstream) ───────────────────────────
+# Apply ClawPump's defaults (pre-wired MCP server + default skin) and env-var
+# registry from the downstream-owned overlay, keeping this upstream-owned file
+# mergeable. No-ops on vanilla Hermes (module/keys absent).
+try:
+    from hermes_cli import distribution as _distribution
+
+    _distribution.apply_config_overlay(DEFAULT_CONFIG)
+    _distribution.apply_env_var_overlay(OPTIONAL_ENV_VARS)
+except Exception:
+    pass
+
 
 # Tool Gateway env vars are always visible — they're useful for
 # self-hosted / custom gateway setups regardless of subscription state.
