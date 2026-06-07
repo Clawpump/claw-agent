@@ -379,6 +379,19 @@ def _hermetic_environment(tmp_path, monkeypatch):
     # tests opt back in by patching the security config directly.
     monkeypatch.setenv("TIRITH_ENABLED", "false")
 
+    # 4c. Neutralize default remote MCP servers. The shipped DEFAULT_CONFIG
+    #     enables a remote MCP server (ClawPump) out of the box. Without this,
+    #     any test that loads config or runs MCP discovery — `hermes mcp`
+    #     listing, cron run_job, gateway/ACP startup — would either surface the
+    #     server in "no servers configured" assertions or block on a live
+    #     network connect to the endpoint until the per-test timeout fires.
+    #     Tests that need MCP servers seed their own via config.yaml.
+    try:
+        import hermes_cli.config as _config_mod
+        monkeypatch.setitem(_config_mod.DEFAULT_CONFIG, "mcp_servers", {})
+    except Exception:
+        pass
+
     # 5. Reset plugin singleton so tests don't leak plugins from
     #    ~/.hermes/plugins/ (which, per step 3, is now empty — but the
     #    singleton might still be cached from a previous test).
