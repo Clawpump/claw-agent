@@ -18,6 +18,14 @@ from typing import Any, Dict
 # Default skin for this distribution (vanilla Hermes uses "default").
 DEFAULT_SKIN = "clawpump"
 
+# Git remote the in-app update check compares against (vanilla Hermes uses
+# NousResearch/hermes-agent).
+UPDATE_REPO_URL = "https://github.com/Clawpump/claw-agent.git"
+
+# Extra top-level CLI subcommands this distribution adds (kept in sync with
+# main.py's _BUILTIN_SUBCOMMANDS validation set via a hook there).
+EXTRA_SUBCOMMANDS = ("clawpump",)
+
 # ── Skins shipped by this distribution ───────────────────────────────────
 # Moved verbatim out of hermes_cli/skin_engine.py:_BUILTIN_SKINS and merged
 # back into that dict by a small hook there, so every skin consumer
@@ -172,3 +180,51 @@ def apply_env_var_overlay(optional_env_vars: Dict[str, Any]) -> None:
     """Register ClawPump's env vars into config.OPTIONAL_ENV_VARS. Idempotent."""
     for name, spec in _CLAWPUMP_ENV_VARS.items():
         optional_env_vars.setdefault(name, dict(spec))
+
+
+# ── CLI integration ──────────────────────────────────────────────────────
+
+
+def register_subparsers(subparsers) -> None:
+    """Register distribution-specific CLI subcommands.
+
+    Wires the ``clawpump`` command (ClawPump MCP install / auth / tool
+    selection) onto the top-level argparse subparsers.
+    """
+    from hermes_cli.clawpump_cli import add_parser as _add_clawpump_parser
+
+    _add_clawpump_parser(subparsers)
+
+
+def try_self_update(project_root: Any) -> bool:
+    """Handle distribution-specific self-update; return True if handled.
+
+    ClawPump agents installed via ``npx @clawpump/claw-agent`` have no git
+    checkout (the bundle ships inside the npm package), so the normal git-pull
+    update can't apply -- re-run the npm installer instead. Returns False when
+    this isn't an npm-bundle install, so the caller falls through to the
+    standard (git / pip / docker) update paths.
+    """
+    from pathlib import Path
+
+    if not (Path(project_root) / ".claw-bundle").exists():
+        return False
+
+    import shutil
+    import subprocess
+    import sys
+
+    print("→ Updating ClawPump agent via npm (npx @clawpump/claw-agent@latest)…")
+    npx = shutil.which("npx")
+    if not npx:
+        print("✗ npx (Node.js) not found. Install Node.js, then run:")
+        print("    npx @clawpump/claw-agent@latest")
+        sys.exit(1)
+    try:
+        subprocess.run([npx, "-y", "@clawpump/claw-agent@latest"], check=True)
+    except subprocess.CalledProcessError as exc:
+        print(f"✗ Update failed (exit {exc.returncode}). Try manually:")
+        print("    npx @clawpump/claw-agent@latest")
+        sys.exit(1)
+    print("✓ ClawPump agent updated. Restart your session with `claw`.")
+    return True
