@@ -9213,28 +9213,6 @@ def _discard_lockfile_churn(git_cmd, repo_root):
         pass
 
 
-def _cmd_update_claw_npm():
-    """Update a ClawPump agent that was installed via ``npx @clawpump/claw-agent``.
-
-    These installs have no git checkout (the bundle ships inside the npm
-    package), so the normal git-pull update can't apply. Re-run the npm
-    installer instead — it re-bundles the latest and reinstalls in place.
-    """
-    print("→ Updating ClawPump agent via npm (npx @clawpump/claw-agent@latest)…")
-    npx = shutil.which("npx")
-    if not npx:
-        print("✗ npx (Node.js) not found. Install Node.js, then run:")
-        print("    npx @clawpump/claw-agent@latest")
-        sys.exit(1)
-    try:
-        subprocess.run([npx, "-y", "@clawpump/claw-agent@latest"], check=True)
-    except subprocess.CalledProcessError as exc:
-        print(f"✗ Update failed (exit {exc.returncode}). Try manually:")
-        print("    npx @clawpump/claw-agent@latest")
-        sys.exit(1)
-    print("✓ ClawPump agent updated. Restart your session with `claw`.")
-
-
 def cmd_update(args):
     """Update Hermes Agent to the latest version.
 
@@ -9253,10 +9231,13 @@ def cmd_update(args):
         managed_error("update Hermes Agent")
         return
 
-    # ClawPump agents installed via `npx @clawpump/claw-agent` have no git
-    # checkout to pull — update by re-running the npm installer instead.
-    if (PROJECT_ROOT / ".claw-bundle").exists():
-        _cmd_update_claw_npm()
+    # Distribution-specific self-update (e.g. ClawPump's npm bundle, which has
+    # no git checkout to pull). No-op on vanilla Hermes.
+    try:
+        from hermes_cli import distribution as _distribution
+    except Exception:
+        _distribution = None
+    if _distribution is not None and _distribution.try_self_update(PROJECT_ROOT):
         return
 
     # Docker users can't ``git pull`` — the image excludes ``.git`` from
@@ -11519,7 +11500,7 @@ def cmd_logs(args):
 # to parse.
 _BUILTIN_SUBCOMMANDS = frozenset(
     {
-        "acp", "auth", "backup", "bundles", "checkpoints", "claw", "clawpump", "completion",
+        "acp", "auth", "backup", "bundles", "checkpoints", "claw", "completion",
         "computer-use",
         "config", "cron", "curator", "dashboard", "debug", "doctor",
         "dump", "fallback", "gateway", "hooks", "import", "insights",
@@ -11535,6 +11516,14 @@ _BUILTIN_SUBCOMMANDS = frozenset(
         "help",
     }
 )
+
+# Distribution-specific subcommands (e.g. ClawPump). No-op on vanilla Hermes.
+try:
+    from hermes_cli import distribution as _distribution
+
+    _BUILTIN_SUBCOMMANDS = _BUILTIN_SUBCOMMANDS | frozenset(_distribution.EXTRA_SUBCOMMANDS)
+except Exception:
+    pass
 
 
 # Top-level flags that take a value. Needed by ``_first_positional_argv``
@@ -12816,10 +12805,14 @@ def main():
     _add_portal_parser(subparsers)
 
     # =========================================================================
-    # clawpump command — ClawPump MCP install / auth / tool selection
+    # Distribution-specific subcommands (e.g. ClawPump). No-op on vanilla Hermes.
     # =========================================================================
-    from hermes_cli.clawpump_cli import add_parser as _add_clawpump_parser
-    _add_clawpump_parser(subparsers)
+    try:
+        from hermes_cli import distribution as _distribution
+    except Exception:
+        _distribution = None
+    if _distribution is not None:
+        _distribution.register_subparsers(subparsers)
 
     # =========================================================================
     # kanban command — multi-profile collaboration board
