@@ -1,0 +1,157 @@
+name: Upstream Sync
+
+# Keep this ClawPump fork current with upstream Hermes
+# (NousResearch/hermes-agent). On a schedule (and on demand) this opens a PR
+# that MERGES upstream/main into main, so a maintainer reviews and merges it.
+#
+# Why a real merge (not squash/cherry-pick): it preserves the shared git
+# history with upstream, so every future sync keeps a clean merge-base and
+# minimal conflicts. The ClawPump rebrand lives in hermes_cli/distribution.py
+# (a downstream overlay), so upstream-owned files rarely conflict — when they
+# do it is usually just README.md / .env.example.
+#
+# See docs/UPSTREAM_SYNC.md for the full rationale, the optional PAT (so the
+# sync PR triggers CI), and how to run / resolve a sync by hand.
+#
+# NOTE: scheduled workflows only run from the repository's DEFAULT branch, so
+# this file must be on `main` before the cron fires. `workflow_dispatch` lets
+# you trigger it manually once it is there.
+
+on:
+  schedule:
+    - cron: "0 7 * * *"   # daily 07:00 UTC — only opens a PR when behind
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: https://github.com/NousResearch/hermes-agent.git
+  UPSTREAM_BRANCH: main
+  BASE_BRANCH: main
+  SYNC_LABEL: upstream-sync
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          # A PAT (secret UPSTREAM_SYNC_PAT) lets the resulting PR trigger the
+          # repo's CI (tests / lint / branding) as the merge gate. Without it,
+          # github.token still works, but PRs it opens do NOT trigger other
+          # workflows, so you would re-run CI on the sync PR manually.
+          token: ${{ secrets.UPSTREAM_SYNC_PAT || github.token }}
+
+      - name: Configure git
+        run: |
+          git config user.name "clawpump-sync[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Plan sync
+        id: plan
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_PAT || github.token }}
+        run: |
+          git remote add upstream "$UPSTREAM_REPO" 2>/dev/null || git remote set-url upstream "$UPSTREAM_REPO"
+          git fetch --no-tags upstream "$UPSTREAM_BRANCH"
+          behind=$(git rev-list --count "origin/${BASE_BRANCH}..upstream/${UPSTREAM_BRANCH}")
+          echo "behind=$behind" >> "$GITHUB_OUTPUT"
+          echo "Behind upstream by ${behind} commit(s)."
+          if [ "$behind" = "0" ]; then
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "Up to date — nothing to do."
+            exit 0
+          fi
+          open=$(gh pr list --state open --label "$SYNC_LABEL" --json number --jq 'length' 2>/dev/null || echo 0)
+          if [ "$open" != "0" ]; then
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "An open '${SYNC_LABEL}' PR already exists — resolve/merge it first."
+            exit 0
+          fi
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Merge upstream into a sync branch
+        id: merge
+        if: steps.plan.outputs.proceed == 'true'
+        run: |
+          branch="sync/upstream-$(date -u +%Y%m%d-%H%M)"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          git checkout -B "$branch" "origin/${BASE_BRANCH}"
+          if git merge --no-edit "upstream/${UPSTREAM_BRANCH}"; then
+            echo "conflicts=false" >> "$GITHUB_OUTPUT"
+            : > conflicts.txt
+            echo "Clean merge."
+          else
+            echo "conflicts=true" >> "$GITHUB_OUTPUT"
+            git diff --name-only --diff-filter=U | tee conflicts.txt
+            git add -A
+            git commit --no-edit
+            echo "Committed conflict markers for human resolution."
+          fi
+          git push -u origin "$branch" --force-with-lease
+
+      - name: Build PR body
+        if: steps.plan.outputs.proceed == 'true'
+        env:
+          BEHIND: ${{ steps.plan.outputs.behind }}
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+          BRANCH: ${{ steps.merge.outputs.branch }}
+        run: |
+          {
+            echo "Automated merge of upstream **NousResearch/hermes-agent@${UPSTREAM_BRANCH}** into \`${BASE_BRANCH}\`."
+            echo ""
+            echo "**Behind by:** ${BEHIND} commit(s)."
+            echo ""
+            if [ "$CONFLICTS" = "true" ]; then
+              echo "> ⚠️ **Merge conflicts** — this branch has conflict markers committed. Check it out, resolve, push, and get CI green before merging:"
+              echo "> \`\`\`"
+              echo "> git fetch origin && git switch ${BRANCH}"
+              echo "> # resolve conflicts, then:"
+              echo "> git add -A && git commit && git push"
+              echo "> \`\`\`"
+              echo ""
+              echo "**Conflicted files:**"
+              sed 's/^/- /' conflicts.txt
+            else
+              echo "✅ Merged cleanly. Review the diff + CI, then merge (use a merge commit to preserve history)."
+            fi
+            echo ""
+            echo "<details><summary>New upstream commits (${BEHIND})</summary>"
+            echo ""
+            git log --no-merges --pretty='- `%h` %s' "origin/${BASE_BRANCH}..upstream/${UPSTREAM_BRANCH}" | head -100
+            echo ""
+            echo "</details>"
+            echo ""
+            echo "_Opened by the Upstream Sync workflow. The ClawPump rebrand lives in \`hermes_cli/distribution.py\`; a conflict in an upstream-owned file usually means a downstream edit leaked into it — prefer moving that edit into the overlay. See docs/UPSTREAM_SYNC.md._"
+          } > pr_body.md
+          cat pr_body.md
+
+      - name: Open PR
+        if: steps.plan.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_PAT || github.token }}
+          BEHIND: ${{ steps.plan.outputs.behind }}
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+          BRANCH: ${{ steps.merge.outputs.branch }}
+        run: |
+          gh label create "$SYNC_LABEL" --color 1D76DB --description "Automated upstream sync" 2>/dev/null || true
+          title="⬆️ Sync upstream — ${BEHIND} commit(s) from NousResearch/hermes-agent"
+          extra=()
+          if [ "$CONFLICTS" = "true" ]; then
+            gh label create "has-conflicts" --color D93F0B --description "Needs manual conflict resolution" 2>/dev/null || true
+            extra=(--label "has-conflicts")
+          fi
+          gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "$BRANCH" \
+            --title "$title" \
+            --body-file pr_body.md \
+            --label "$SYNC_LABEL" "${extra[@]}"
