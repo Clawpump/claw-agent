@@ -24,12 +24,24 @@ def test_distribution_module_present():
 
 class TestConfigOverlayApplied:
     def test_default_mcp_server_prewired(self):
+        from hermes_cli import distribution
         from hermes_cli.config import DEFAULT_CONFIG
 
+        # The hermetic test fixture blanks DEFAULT_CONFIG["mcp_servers"] so no
+        # test can reach the live ClawPump endpoint, which also hides the
+        # entry the import-time hook added. The hook having run is still
+        # observable through the skin it set (the fixture leaves "display"
+        # alone); the server entry itself is verified by re-applying the
+        # idempotent overlay onto the (blanked) config.
+        assert (DEFAULT_CONFIG.get("display") or {}).get("skin") == "clawpump", (
+            "ClawPump defaults missing from DEFAULT_CONFIG — the config overlay "
+            "did not apply (a hook in config.py likely broke on an upstream merge)."
+        )
+        distribution.apply_config_overlay(DEFAULT_CONFIG)
         servers = DEFAULT_CONFIG.get("mcp_servers") or {}
         assert "clawpump" in servers, (
-            "ClawPump MCP server missing from DEFAULT_CONFIG — the config overlay "
-            "did not apply (a hook in config.py likely broke on an upstream merge)."
+            "ClawPump MCP server missing after apply_config_overlay — the "
+            "overlay no longer pre-wires the remote ClawPump MCP entry."
         )
         claw = servers["clawpump"]
         assert claw.get("url", "").startswith("https://")
