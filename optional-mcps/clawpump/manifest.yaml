@@ -3,7 +3,7 @@
 manifest_version: 1
 
 name: clawpump
-description: ClawPump — Solana AI agents, trading, perps, DCA, token launch, marketplace, lending, predictions, market intelligence (104 tools).
+description: ClawPump — Solana AI agents, trading, perps, DCA, token launch, marketplace, lending, predictions, gift cards, agent mail, market intelligence (126 tools).
 source: https://mcp.clawpump.tech
 
 # ClawPump ships a remote MCP server: Streamable HTTP + native OAuth 2.1 +
@@ -29,11 +29,12 @@ auth:
   # first probe / first connect.
 
 # Tool selection at install time.
-# ClawPump exposes 104 tools; 28 of them move real funds or are irreversible
+# ClawPump exposes 126 tools; 35 of them move real funds or are irreversible
 # (perps orders, swaps, DCA/limit orders, lending deposit/withdraw, prediction
-# positions, marketplace bids, external-wallet changes, token launches).
+# positions, marketplace bids, external-wallet changes, token launches,
+# gift-card purchases/withdrawals, agent-mail provisioning/sending).
 # Hermes does NOT auto-gate MCP tools by their destructiveHint, so we ship a
-# read-mostly default: the 76 safe tools below are pre-checked in the install
+# read-mostly default: the 91 safe tools below are pre-checked in the install
 # checklist (and applied directly if the server can't be probed before auth).
 # Users opt into the financial tools per their threat model in the checklist,
 # or later with `hermes mcp configure clawpump`.
@@ -54,6 +55,23 @@ tools:
     - upload_agent_avatar
     - get_agent_asset_url
     - list_available_skills
+    # agent cards (Laso — reads / linking / quotes; purchase & withdraw are opt-in)
+    - agent_card_list
+    - agent_card_get
+    - agent_card_status
+    - agent_card_balance
+    - agent_card_data
+    - agent_card_withdrawals
+    - agent_card_quote
+    - agent_card_refresh
+    - agent_card_search_gift_cards
+    - agent_card_search_merchants
+    - agent_card_connect
+    - agent_card_connect_link
+    # agent mail (reads; inbox provisioning & sending are opt-in)
+    - agent_mail_get_address
+    - agent_mail_list
+    - agent_mail_read
     # automations
     - list_automations
     - get_automation
@@ -143,8 +161,10 @@ post_install: |
 
   FINANCIAL / IRREVERSIBLE TOOLS are OFF by default (perps_*, swap_execute,
   dca_create, limit_order_create, jup_lend_deposit/withdraw, predictions_open/
-  close, place_bid / accept_marketplace_bid, set_external_wallet, and the
-  token-launch tools). Several require confirmRisk=true / confirm_launch=true.
+  close, place_bid / accept_marketplace_bid, set_external_wallet,
+  agent_card_create/cancel/reveal/withdraw, agent_mail_create/send, and the
+  token-launch tools). Several require explicit confirm flags (confirmRisk,
+  confirm_launch, confirm_spend, confirm_send, …).
   Enable the ones you want and review every call:
     hermes mcp configure clawpump
 

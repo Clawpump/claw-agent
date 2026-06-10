@@ -15,7 +15,7 @@
   <a href="https://github.com/NousResearch/hermes-agent">Upstream: Hermes</a>
 </p>
 
-ClawPump's full feature set — **104 MCP tools** spanning agents, trading, Phoenix perps, DCA, Jupiter lending, token launch, marketplace, predictions, and market intelligence — is wired in natively. One command:
+ClawPump's full feature set — **126 MCP tools** spanning agents, trading, Phoenix perps, DCA, Jupiter lending, token launch, marketplace, predictions, gift cards (Laso), agent mail, and market intelligence — is wired in natively. One command:
 
 ```bash
 hermes clawpump setup     # pick remote OAuth (browser) or stdio (cpk_ key)

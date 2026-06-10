@@ -3,7 +3,7 @@
 manifest_version: 1
 
 name: clawpump-stdio
-description: ClawPump (stdio) — the same 104 tools via the npm package, authed with a cpk_* API key (no browser).
+description: ClawPump (stdio) — the same 126 tools via the npm package, authed with a cpk_* API key (no browser).
 source: https://www.npmjs.com/package/@clawpump/agents
 
 # Same tool surface as the `clawpump` remote entry, but run locally over stdio
@@ -31,8 +31,8 @@ auth:
       secret: false
       default: ""
 
-# Same read-mostly default as the remote `clawpump` entry: 76 safe tools
-# pre-checked; the 28 financial/irreversible tools are opt-in. See the
+# Same read-mostly default as the remote `clawpump` entry: 91 safe tools
+# pre-checked; the 35 financial/irreversible tools are opt-in. See the
 # `clawpump` manifest for the rationale (Hermes does not auto-gate MCP tools
 # by destructiveHint).
 tools:
@@ -52,6 +52,23 @@ tools:
     - upload_agent_avatar
     - get_agent_asset_url
     - list_available_skills
+    # agent cards (Laso — reads / linking / quotes; purchase & withdraw are opt-in)
+    - agent_card_list
+    - agent_card_get
+    - agent_card_status
+    - agent_card_balance
+    - agent_card_data
+    - agent_card_withdrawals
+    - agent_card_quote
+    - agent_card_refresh
+    - agent_card_search_gift_cards
+    - agent_card_search_merchants
+    - agent_card_connect
+    - agent_card_connect_link
+    # agent mail (reads; inbox provisioning & sending are opt-in)
+    - agent_mail_get_address
+    - agent_mail_list
+    - agent_mail_read
     # automations
     - list_automations
     - get_automation
