@@ -15,13 +15,13 @@
   <a href="https://github.com/NousResearch/hermes-agent">Upstream: Hermes</a>
 </p>
 
-ClawPump's full feature set — **126 MCP tools** spanning agents, trading, Phoenix perps, DCA, Jupiter lending, token launch, marketplace, predictions, gift cards (Laso), agent mail, and market intelligence — is wired in natively. One command:
+ClawPump's full feature set — **127 MCP tools** spanning agents, trading, Phoenix perps, DCA, Jupiter lending, token launch, marketplace, predictions, gift cards (Laso), agent mail, wallet transfers, and market intelligence — is wired in natively. One command:
 
 ```bash
 hermes clawpump setup     # pick remote OAuth (browser) or stdio (cpk_ key)
 ```
 
-That pairs the agent with the ClawPump MCP — remote `https://mcp.clawpump.tech/mcp`, or the local `npx @clawpump/agents` stdio path — and the ClawPump green theme is on by default. See the [ClawPump skill](skills/clawpump/SKILL.md) and the catalog entries under [`optional-mcps/`](optional-mcps/) (`clawpump`, `clawpump-stdio`).
+That pairs the agent with the ClawPump MCP — remote `https://mcp.clawpump.tech/mcp`, or the local `npx @clawpump/agents` stdio path — and the ClawPump green theme is on by default. See the [ClawPump skill](skills/clawpump/SKILL.md) and the catalog entries under [`optional-mcps/`](optional-mcps/) (`clawpump`, `clawpump-stdio`, plus `pay-sh` for [pay.sh](https://pay.sh) x402 paid APIs funded from the agent wallet).
 
 > **Built on Hermes.** ClawPump is a downstream distribution of the **Hermes Agent** by **Nous Research**, used under the MIT License. The upstream agent — its runtime, docs, and features — is unchanged below; ClawPump adds the native ClawPump MCP integration plus init/theme branding on top. Full credit for the underlying agent goes to Nous Research. See [`LICENSE`](LICENSE).
 

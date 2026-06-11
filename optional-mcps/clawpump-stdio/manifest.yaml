@@ -3,7 +3,7 @@
 manifest_version: 1
 
 name: clawpump-stdio
-description: ClawPump (stdio) — the same 126 tools via the npm package, authed with a cpk_* API key (no browser).
+description: ClawPump (stdio) — the same 127 tools via the npm package, authed with a cpk_* API key (no browser).
 source: https://www.npmjs.com/package/@clawpump/agents
 
 # Same tool surface as the `clawpump` remote entry, but run locally over stdio
@@ -32,7 +32,7 @@ auth:
       default: ""
 
 # Same read-mostly default as the remote `clawpump` entry: 91 safe tools
-# pre-checked; the 35 financial/irreversible tools are opt-in. See the
+# pre-checked; the 36 financial/irreversible tools are opt-in. See the
 # `clawpump` manifest for the rationale (Hermes does not auto-gate MCP tools
 # by destructiveHint).
 tools:

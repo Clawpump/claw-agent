@@ -3,7 +3,7 @@
 manifest_version: 1
 
 name: clawpump
-description: ClawPump — Solana AI agents, trading, perps, DCA, token launch, marketplace, lending, predictions, gift cards, agent mail, market intelligence (126 tools).
+description: ClawPump — Solana AI agents, trading, perps, DCA, token launch, marketplace, lending, predictions, gift cards, agent mail, market intelligence (127 tools).
 source: https://mcp.clawpump.tech
 
 # ClawPump ships a remote MCP server: Streamable HTTP + native OAuth 2.1 +
@@ -29,10 +29,11 @@ auth:
   # first probe / first connect.
 
 # Tool selection at install time.
-# ClawPump exposes 126 tools; 35 of them move real funds or are irreversible
+# ClawPump exposes 127 tools; 36 of them move real funds or are irreversible
 # (perps orders, swaps, DCA/limit orders, lending deposit/withdraw, prediction
-# positions, marketplace bids, external-wallet changes, token launches,
-# gift-card purchases/withdrawals, agent-mail provisioning/sending).
+# positions, marketplace bids, external-wallet changes, wallet transfers,
+# token launches, gift-card purchases/withdrawals, agent-mail
+# provisioning/sending).
 # Hermes does NOT auto-gate MCP tools by their destructiveHint, so we ship a
 # read-mostly default: the 91 safe tools below are pre-checked in the install
 # checklist (and applied directly if the server can't be probed before auth).
@@ -162,9 +163,10 @@ post_install: |
   FINANCIAL / IRREVERSIBLE TOOLS are OFF by default (perps_*, swap_execute,
   dca_create, limit_order_create, jup_lend_deposit/withdraw, predictions_open/
   close, place_bid / accept_marketplace_bid, set_external_wallet,
-  agent_card_create/cancel/reveal/withdraw, agent_mail_create/send, and the
-  token-launch tools). Several require explicit confirm flags (confirmRisk,
-  confirm_launch, confirm_spend, confirm_send, …).
+  wallet_transfer, agent_card_create/cancel/reveal/withdraw,
+  agent_mail_create/send, and the token-launch tools). Several require
+  explicit confirm flags (confirmRisk, confirm_launch, confirm_spend,
+  confirm_send, confirm_transfer, …).
   Enable the ones you want and review every call:
     hermes mcp configure clawpump
 
