@@ -1,6 +1,6 @@
 """``hermes clawpump`` — one-command install/auth for the ClawPump MCP.
 
-ClawPump ships its full feature set (127 tools) as an MCP server, bundled in
+ClawPump ships its full feature set (131 tools) as an MCP server, bundled in
 the Hermes catalog as two entries:
 
   - ``clawpump``        remote OAuth over Streamable HTTP (browser, paste cpk_*)
@@ -59,7 +59,7 @@ def _cmd_setup(args) -> int:
     print()
     print(color("  ClawPump setup", Colors.GREEN + Colors.BOLD))
     print(color("  ──────────────", Colors.GREEN))
-    print("  ClawPump's 127 tools (agents, trading, perps, DCA, lending,")
+    print("  ClawPump's 131 tools (agents, trading, perps, DCA, lending,")
     print("  token launch, marketplace, predictions, gift cards, agent")
     print("  mail, intelligence) come in through an MCP server. Two ways")
     print("  to connect:")
@@ -221,7 +221,7 @@ def add_parser(subparsers) -> None:
         help="ClawPump (Solana token launch, trading, perps, DeFi) via MCP",
         description=(
             "Install and authenticate the ClawPump MCP server, then manage which "
-            "of its 127 tools are enabled. Subcommands: setup (default: status), "
+            "of its 131 tools are enabled. Subcommands: setup (default: status), "
             "login, status, tools."
         ),
     )

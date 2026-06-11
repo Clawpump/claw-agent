@@ -13,9 +13,19 @@ metadata:
 
 Pay.sh is a catalog of APIs gated by stablecoin payments instead of accounts
 and API keys: call an endpoint, get HTTP 402 with a price, pay in USDC, get
-the response. The official client is the `pay` CLI (npm package
-`@solana/pay`), and its `pay mcp` server reaches Hermes through the
-**`pay-sh` catalog entry** (7 tools).
+the response.
+
+**Preferred route — pay with the ClawPump agent wallet:** the ClawPump MCP
+ships `pay_sh_search` / `pay_sh_provider_details` / `pay_sh_prepare_call` /
+`pay_sh_execute_approved`, which settle x402 payments server-side from the
+agent's own custodial wallet (no local wallet, no funding hop). Use those
+when the user wants the ClawPump wallet to pay — see the `clawpump` skill.
+The agent needs the `x402` skill enabled (`update_agent`).
+
+**Alternative — local pay wallet:** the official `pay` CLI (npm package
+`@solana/pay`) and its `pay mcp` server reach Hermes through the **`pay-sh`
+catalog entry** (7 tools), paying from a local wallet you fund yourself.
+The rest of this doc covers that route.
 
 ## Enabling
 

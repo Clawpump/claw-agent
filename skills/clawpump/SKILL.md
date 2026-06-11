@@ -1,7 +1,7 @@
 ---
 name: clawpump
 description: "ClawPump on Solana — create/chat with agents, trade, perps, DCA, lend, launch tokens, marketplace, predictions, gift cards, agent email, intelligence via mcp_clawpump_* tools. Use when the user mentions ClawPump, launching a token, an agent's wallet/balance, swaps, perps, gift cards, agent email, or DeFi on Solana."
-version: 1.2.0
+version: 1.3.0
 platforms: [linux, macos, windows]
 metadata:
   hermes:
@@ -14,7 +14,7 @@ metadata:
 ClawPump is a Solana platform for AI agents: each agent has a wallet and can
 trade, run perps, DCA, lend, launch tokens, buy gift cards, send email from
 its own inbox, and be bought/sold on a marketplace. Its full feature set
-reaches Hermes through the **ClawPump MCP server** (127 tools, 10 resources,
+reaches Hermes through the **ClawPump MCP server** (131 tools, 10 resources,
 10 prompts).
 
 ## Enabling ClawPump
@@ -44,7 +44,7 @@ Most tools act on a specific agent. Resolve it once with `list_agents`, then
 pass `agent_id`. If the user set `CLAWPUMP_DEFAULT_AGENT` (or has exactly one
 agent), `agent_id` can usually be omitted. When unsure which agent, ask.
 
-## What's available (127 tools, 19 groups)
+## What's available (131 tools, 20 groups)
 
 | Group | Representative tools |
 |-------|----------------------|
@@ -61,6 +61,7 @@ agent), `agent_id` can usually be omitted. When unsure which agent, ask.
 | Marketplace | `browse_marketplace`, `create_marketplace_listing`, `delist_marketplace_listing`, `browse_public_agents`, `place_bid`, `get_my_bids`, `get_received_bids`, `accept_marketplace_bid`, `reject_marketplace_bid`, `withdraw_marketplace_bid`, `get_marketplace_history` |
 | Agent cards (Laso) | `agent_card_search_merchants`, `agent_card_search_gift_cards`, `agent_card_quote`, `agent_card_create`, `agent_card_list`, `agent_card_get`, `agent_card_status`, `agent_card_data`, `agent_card_balance`, `agent_card_reveal`, `agent_card_cancel`, `agent_card_refresh`, `agent_card_withdraw`, `agent_card_withdrawals`, `agent_card_connect`, `agent_card_connect_link` |
 | Agent mail | `agent_mail_create`, `agent_mail_get_address`, `agent_mail_send`, `agent_mail_list`, `agent_mail_read` |
+| Pay.sh x402 (agent-wallet paid APIs) | `pay_sh_search`, `pay_sh_provider_details`, `pay_sh_prepare_call`, `pay_sh_execute_approved` |
 | Wallet & billing | `get_balance`, `get_budget`, `get_usage`, `get_transactions`, `get_wallet_summaries`, `get_wallet_history`, `get_private_wallet_balance`, `get_balance_history`, `sync_billing`, `wallet_transfer` |
 | Market intelligence | `intelligence_capabilities`, `intelligence_market`, `intelligence_signals`, `intelligence_macro`, `intelligence_perps` |
 | Integrations | `list_integrations`, `save_integration`, `remove_integration`, `get_linked_accounts` |
@@ -68,7 +69,7 @@ agent), `agent_id` can usually be omitted. When unsure which agent, ask.
 | Whitelist | `get_whitelist`, `add_to_whitelist`, `remove_from_whitelist` |
 | Utility | `get_model_catalog`, `get_news_feed` |
 
-By default only the **91 read-mostly** tools are enabled. The financial ones
+By default only the **94 read-mostly** tools are enabled. The financial ones
 below are opt-in via `hermes mcp configure clawpump`.
 
 ## ⚠️ FINANCIAL & IRREVERSIBLE TOOLS — confirmation is mandatory
@@ -77,8 +78,8 @@ These move real funds on-chain or are irreversible. **Never call them without
 the user's explicit, specific go-ahead in this conversation.** Quote the exact
 action (amounts, token, agent) and wait for a clear yes. Several require an
 explicit confirm flag (e.g. `confirmRisk: true`, `confirm_launch: true`,
-`confirm_spend: true`, `confirm_send: true`, `confirm_transfer: true`) — only
-set it after the user agrees.
+`confirm_spend: true`, `confirm_send: true`, `confirm_transfer: true`,
+`confirm_payment: true`) — only set it after the user agrees.
 
 - Trading: `swap_execute`, `dca_create`, `dca_cancel`, `limit_order_create`, `limit_order_cancel`
 - Perps: `perps_account_prepare`, `perps_trader_register`, `perps_collateral_deposit`, `perps_collateral_withdraw`, `perps_order_execute`, `perps_order_cancel`
@@ -90,11 +91,13 @@ set it after the user agrees.
 - Agent cards (Laso): `agent_card_create` (pays USDC from the agent wallet — quote first), `agent_card_withdraw`, `agent_card_cancel`, `agent_card_reveal` (exposes the card number / redemption secret)
 - Agent mail: `agent_mail_create` (one-time ~$2 USDC from the agent wallet), `agent_mail_send` (outward-facing email)
 - Wallet: `wallet_transfer` (irreversible on-chain send; destination must be on the agent's whitelist via `add_to_whitelist`; quote the exact amount, token, and address, then `confirm_transfer: true`)
+- Pay.sh x402: `pay_sh_execute_approved` (pays USDC from the agent wallet via x402 — always `pay_sh_prepare_call` first; quote the exact endpoint + price; approval codes expire in 10 minutes; requires the `x402` skill on the agent)
 
 **Always get a quote/preview first** (`swap_quote` before `swap_execute`,
 `perps_order_preview` before `perps_order_execute`, `agent_card_quote` before
-`agent_card_create`) and show it to the user before executing. Report tx
-signatures back when a call succeeds.
+`agent_card_create`, `pay_sh_prepare_call` before `pay_sh_execute_approved`)
+and show it to the user before executing. Report tx signatures back when a
+call succeeds.
 
 ## Resources (read with the MCP resource reader)
 
@@ -131,3 +134,4 @@ Common patterns:
 - **Gift card:** `agent_card_search_merchants`/`agent_card_search_gift_cards` → `agent_card_quote` → (confirm) → `agent_card_create` → `agent_card_status`; `agent_card_reveal` only when the user asks for the card details.
 - **Agent email:** `agent_mail_get_address`; no inbox → (confirm ~$2 USDC) `agent_mail_create`; then `agent_mail_send` (confirm) or `agent_mail_list` → `agent_mail_read`.
 - **Fund an external wallet (e.g. a pay.sh allowance):** `get_balance` → `add_to_whitelist` (user-approved address) → (confirm) `wallet_transfer`. See the `pay-sh` skill.
+- **Paid x402 API call (agent wallet pays):** `pay_sh_search` → `pay_sh_provider_details` (price) → `pay_sh_prepare_call` → (confirm price with user) → `pay_sh_execute_approved`. The agent needs the `x402` skill (`update_agent` with `enabled_skills`).
