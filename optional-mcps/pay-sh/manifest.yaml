@@ -1,0 +1,52 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: pay-sh
+description: Pay.sh (Solana Pay) — discover pay-as-you-go x402 APIs and call them with stablecoins from a local pay wallet (7 tools).
+source: https://pay.sh
+
+# pay.sh ships the official `pay` CLI as the @solana/pay npm package; `pay mcp`
+# is its bundled MCP server (the native binary downloads on first run; Node 20+).
+# The wallet is LOCAL: keys live under ~/.config/pay (created with `pay setup`
+# or `pay account new`), funded with USDC — e.g. a small allowance sent from a
+# ClawPump agent wallet via the clawpump MCP `wallet_transfer` tool after
+# whitelisting the pay wallet address, or `pay topup` (QR / Venmo / PayPal).
+transport:
+  type: stdio
+  command: npx
+  args:
+    - "-y"
+    - "@solana/pay"
+    - "mcp"
+
+auth:
+  type: none
+
+# Read/discovery tools are on by default. `curl` is the tool that actually
+# PAYS — it auto-settles HTTP 402 responses with stablecoins from the local
+# pay wallet — and `create_skill` publishes a provider listing to the public
+# catalog. Both are opt-in, same philosophy as the `clawpump` entry (Hermes
+# does not auto-gate MCP tools by destructiveHint).
+tools:
+  default_enabled:
+    - search_catalog
+    - list_catalog
+    - get_catalog_entry
+    - get_balance
+    - topup
+
+post_install: |
+  Requires Node.js / npx; the pay binary downloads on first run.
+
+  One-time local wallet setup (keys under ~/.config/pay):
+    pay setup            # or: pay account new
+  Fund it with a small USDC allowance — from a ClawPump agent wallet
+  (whitelist the pay address, then the clawpump `wallet_transfer` tool) or
+  with `pay topup`.
+
+  The `curl` tool (auto-pays 402s from the wallet) is OFF by default:
+    hermes mcp configure pay-sh
+  Always confirm the endpoint and price with the user before a paid call.
+
+  Start a new Hermes session to load the Pay.sh tools.
