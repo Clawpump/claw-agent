@@ -1,95 +1,66 @@
 ---
 name: pay-sh
-description: "Pay.sh / x402 paid APIs — search a public catalog of pay-as-you-go services (market data, email, voice, domains, shopping…) and pay per call in USDC from a local pay wallet. Use when the user mentions pay.sh, x402, 402 payments, buying API access without signup, or paying for a service with stablecoins."
-version: 1.0.0
+description: "Pay.sh / x402 paid APIs paid with the ClawPump agent wallet — search a catalog of pay-per-call services (images, data, email, voice…) and pay per call in USDC straight from the agent's custodial wallet via the ClawPump MCP. Use when the user mentions pay.sh, x402, 402 payments, or paying for an API/service with the agent's funds."
+version: 2.0.0
 platforms: [linux, macos, windows]
 metadata:
   hermes:
-    tags: [pay-sh, x402, solana, payments, usdc, apis, mcp]
+    tags: [pay-sh, x402, solana, payments, usdc, apis, mcp, clawpump]
     related_skills: [clawpump, mcp]
 ---
 
-# Pay.sh (x402 paid APIs)
+# Pay.sh (x402 paid APIs) — paid by the ClawPump wallet
 
 Pay.sh is a catalog of APIs gated by stablecoin payments instead of accounts
-and API keys: call an endpoint, get HTTP 402 with a price, pay in USDC, get
-the response.
+and keys: call an endpoint, get HTTP 402 with a price, pay in USDC, get the
+response. ClawPump pays these **from the agent's own custodial wallet** — there
+is no separate wallet to create or fund.
 
-**Preferred route — pay with the ClawPump agent wallet:** the ClawPump MCP
-ships `pay_sh_search` / `pay_sh_provider_details` / `pay_sh_prepare_call` /
-`pay_sh_execute_approved`, which settle x402 payments server-side from the
-agent's own custodial wallet (no local wallet, no funding hop). Use those
-when the user wants the ClawPump wallet to pay — see the `clawpump` skill.
-The agent needs the `x402` skill enabled (`update_agent`).
+## Use the ClawPump MCP tools — nothing else
 
-**Alternative — local pay wallet:** the official `pay` CLI (npm package
-`@solana/pay`) and its `pay mcp` server reach Hermes through the **`pay-sh`
-catalog entry** (7 tools), paying from a local wallet you fund yourself.
-The rest of this doc covers that route.
+These come from the ClawPump MCP (`mcp_clawpump_*` / `mcp_clawpump-stdio_*`):
 
-## Enabling
+- `pay_sh_search` — find providers (free)
+- `pay_sh_provider_details` — endpoints + per-call price for one provider (free)
+- `pay_sh_prepare_call` — balance preflight + payment preview + a 10-minute
+  approval code; **pays nothing**
+- `pay_sh_execute_approved` — pays from the agent wallet via x402 and returns
+  the response; needs the approval code + `confirm_payment: true`
 
-```
-hermes mcp install pay-sh      # stdio: npx -y @solana/pay mcp
-```
+## ⛔ Never do this
 
-If Pay.sh tools are missing, tell the user to run that and restart the
-session. The `pay` CLI itself also works from the shell (`pay curl …`,
-`pay skills search …`) when the MCP entry isn't installed.
+- **Do NOT run the `pay` CLI** (`npx @solana/pay …`) — `pay setup`,
+  `pay account new`, `pay topup`, `pay curl`, etc. That creates a *separate
+  local wallet*, which is exactly what we are avoiding. The user wants the
+  **ClawPump agent wallet** to pay.
+- **Do NOT** create, fund, or transfer to any local/external pay wallet for
+  this. No `wallet_transfer` "allowance" hop either.
+- If the ClawPump pay_sh tools are missing, tell the user to enable them
+  (`hermes mcp configure clawpump`, opt in `pay_sh_execute_approved`) and that
+  the agent needs the `x402` skill — do **not** fall back to the CLI.
 
-## Tools
+## Requirement: the `x402` skill
 
-Namespaced as `mcp_pay-sh_<tool>`:
+`pay_sh_prepare_call` / `pay_sh_execute_approved` require the ClawPump agent to
+have the **`x402`** skill enabled. If a call is rejected for capability, enable
+it with `update_agent` (`enabled_skills` += `x402`), then retry — never reach
+for the CLI.
 
-- `search_catalog` / `list_catalog` / `get_catalog_entry` — find providers,
-  inspect endpoints and per-call prices. Free.
-- `get_balance` — the local pay account's stablecoin balance. Free.
-- `topup` — generate a top-up QR for the pay account. Free (the user pays
-  externally).
-- `curl` — make an HTTP request **that auto-pays 402s from the local
-  wallet**. This is the spending tool; OFF by default
-  (`hermes mcp configure pay-sh`).
-- `create_skill` — publish/validate a provider listing (for API developers).
-  OFF by default.
+## ⚠️ Spending rules
 
-## Wallet & funding
+`pay_sh_execute_approved` spends real USDC. Before it:
 
-The pay wallet is **local** (keys under `~/.config/pay`, created with
-`pay setup` or `pay account new`) — it is NOT the ClawPump agent wallet.
-Treat it as a small spending allowance and keep only what the user intends
-to spend.
+1. Get the price first — `pay_sh_provider_details` / the `pay_sh_prepare_call`
+   preview include per-call pricing.
+2. Tell the user the exact endpoint and price; wait for a clear yes.
+3. Only then call `pay_sh_execute_approved` with the approval code and
+   `confirm_payment: true`. Never loop paid calls without telling the user the
+   total.
+4. Report what was spent and the result.
 
-To fund it from a ClawPump agent wallet (needs the `clawpump` MCP):
+## Pattern
 
-1. `get_balance` (clawpump) — confirm the agent holds enough USDC.
-2. `add_to_whitelist` — whitelist the pay wallet address (user-approved).
-3. `wallet_transfer` — send the approved amount (USDC) with
-   `confirm_transfer: true`. Quote the exact amount + destination and wait
-   for an explicit yes first.
-
-Alternatively `topup` (QR — Venmo/PayPal/mobile wallet, no ClawPump
-involved).
-
-## ⚠️ Spending rules — confirmation is mandatory
-
-`curl` spends real funds with no confirmation prompt of its own. Before any
-paid call:
-
-1. Look up the endpoint's price first (`get_catalog_entry` /
-   `search_catalog` include per-call pricing).
-2. Tell the user the exact endpoint and price and wait for a clear yes in
-   this conversation.
-3. Only then call `curl`. Never loop paid calls (retries, pagination,
-   polling) without telling the user the total cost.
-4. Report what was spent; `get_balance` after non-trivial spending.
-
-## Common patterns
-
-- **Find a service:** `search_catalog("weather data")` → pick provider →
-  `get_catalog_entry(fqn)` → quote price to the user.
-- **Paid call:** confirm price → `curl` the endpoint → return the result +
-  cost.
-- **Fund the wallet:** clawpump `add_to_whitelist` → `wallet_transfer`
-  (confirmed) → `get_balance` (pay-sh) to verify arrival.
-- **Out of funds:** `get_balance` shows the shortfall → offer `topup` or
-  another funded transfer from the ClawPump wallet.
+`pay_sh_search` → `pay_sh_provider_details` (price) → quote it to the user →
+`pay_sh_prepare_call` → (user approves) → `pay_sh_execute_approved`. All paid
+from the agent's ClawPump wallet. See the `clawpump` skill for the full tool
+reference.

@@ -21,7 +21,7 @@ ClawPump's full feature set — **131 MCP tools** spanning agents, trading, Phoe
 hermes clawpump setup     # pick remote OAuth (browser) or stdio (cpk_ key)
 ```
 
-That pairs the agent with the ClawPump MCP — remote `https://mcp.clawpump.tech/mcp`, or the local `npx @clawpump/agents` stdio path — and the ClawPump green theme is on by default. See the [ClawPump skill](skills/clawpump/SKILL.md) and the catalog entries under [`optional-mcps/`](optional-mcps/) (`clawpump`, `clawpump-stdio`, plus `pay-sh` for [pay.sh](https://pay.sh) x402 paid APIs funded from the agent wallet).
+That pairs the agent with the ClawPump MCP — remote `https://mcp.clawpump.tech/mcp`, or the local `npx @clawpump/agents` stdio path — and the ClawPump green theme is on by default. See the [ClawPump skill](skills/clawpump/SKILL.md) and the catalog entries under [`optional-mcps/`](optional-mcps/) (`clawpump`, `clawpump-stdio`). [pay.sh](https://pay.sh) x402 paid APIs are paid straight from the agent wallet via the `pay_sh_*` tools — no separate wallet.
 
 > **Built on Hermes.** ClawPump is a downstream distribution of the **Hermes Agent** by **Nous Research**, used under the MIT License. The upstream agent — its runtime, docs, and features — is unchanged below; ClawPump adds the native ClawPump MCP integration plus init/theme branding on top. Full credit for the underlying agent goes to Nous Research. See [`LICENSE`](LICENSE).
 
