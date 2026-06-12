@@ -89,7 +89,7 @@ explicit confirm flag (e.g. `confirmRisk: true`, `confirm_launch: true`,
 - Token launch: `launch_token_gasless`, `launch_metaplex_genesis_token`
 - Account / lifecycle: `set_external_wallet`, `delete_agent`, `delete_automation`, `delete_custom_skill`, `cancel_agent_run`, `remove_integration`, `remove_from_whitelist`
 - Agent cards (Laso): `agent_card_create` (pays USDC from the agent wallet — quote first), `agent_card_withdraw`, `agent_card_cancel`, `agent_card_reveal` (exposes the card number / redemption secret)
-- Agent mail: `agent_mail_create` (one-time ~$2 USDC from the agent wallet), `agent_mail_send` (outward-facing email)
+- Agent mail: `agent_mail_create` (one-time ~$2 USDC from the agent wallet), `agent_mail_send` (outward-facing email; paid per send via x402 from the agent wallet)
 - Wallet: `wallet_transfer` (irreversible on-chain send; destination must be on the agent's whitelist via `add_to_whitelist`; quote the exact amount, token, and address, then `confirm_transfer: true`)
 - Pay.sh x402: `pay_sh_execute_approved` (pays USDC from the agent wallet via x402 — always `pay_sh_prepare_call` first; quote the exact endpoint + price; approval codes expire in 10 minutes; requires the `x402` skill on the agent)
 
@@ -133,5 +133,6 @@ Common patterns:
 - **Perps:** `perps_markets`/`perps_market_data` → `perps_order_preview` → (confirm) → `perps_order_execute`.
 - **Gift card:** `agent_card_search_merchants`/`agent_card_search_gift_cards` → `agent_card_quote` → (confirm) → `agent_card_create` → `agent_card_status`; `agent_card_reveal` only when the user asks for the card details.
 - **Agent email:** `agent_mail_get_address`; no inbox → (confirm ~$2 USDC) `agent_mail_create`; then `agent_mail_send` (confirm) or `agent_mail_list` → `agent_mail_read`.
+  - **Deliverability (avoid spam):** write genuine, complete messages — a specific subject, a greeting, 2–4 sentences of real purpose, and a sign-off. Never send one-word/empty bodies or test-like "hello": low-content mail from a fresh sender domain is the #1 spam trigger. Do **not** use fake-urgent or deceptive subjects ("IMPORTANT!!", "URGENT") to game filters — that backfires and is deceptive. Tell first-time recipients to mark "Not spam" + add the address to contacts; that trains their inbox fastest.
 - **Fund an external wallet (e.g. a pay.sh allowance):** `get_balance` → `add_to_whitelist` (user-approved address) → (confirm) `wallet_transfer`. See the `pay-sh` skill.
 - **Paid x402 API call (agent wallet pays):** `pay_sh_search` → `pay_sh_provider_details` (price) → `pay_sh_prepare_call` → (confirm price with user) → `pay_sh_execute_approved`. The agent needs the `x402` skill (`update_agent` with `enabled_skills`).
