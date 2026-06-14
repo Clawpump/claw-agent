@@ -87,6 +87,36 @@ class TestSkinOverlayApplied:
         init_skin_from_config({})
         assert get_active_skin_name() == "clawpump"
 
+    def test_explicit_default_skin_resolves_to_clawpump(self):
+        # A user with `display.skin: default` persisted (or anyone picking
+        # "default" via /skin) must get the ClawPump brand, not vanilla Hermes.
+        # The remap lives in set_active_skin so it covers both startup and the
+        # interactive picker.
+        from hermes_cli.skin_engine import (
+            get_active_skin,
+            get_active_skin_name,
+            init_skin_from_config,
+            set_active_skin,
+        )
+
+        init_skin_from_config({"display": {"skin": "default"}})
+        assert get_active_skin_name() == "clawpump"
+
+        skin = set_active_skin("default")
+        assert skin.get_branding("agent_name", "") == "ClawPump"
+        assert get_active_skin().get_branding("agent_name", "") == "ClawPump"
+
+    def test_default_skin_data_base_untouched(self):
+        # The remap must NOT overwrite the built-in "default" entry: it is the
+        # inheritance base for every other skin (_build_skin_config), so its
+        # colors leaking would re-tint unrelated skins. load_skin("default")
+        # therefore still returns vanilla Hermes.
+        from hermes_cli.skin_engine import load_skin
+
+        vanilla = load_skin("default")
+        assert vanilla.name == "default"
+        assert vanilla.get_branding("agent_name", "") == "Hermes Agent"
+
 
 class TestCliOverlayApplied:
     def test_clawpump_in_builtin_subcommands(self):

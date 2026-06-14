@@ -788,8 +788,23 @@ def get_active_skin() -> SkinConfig:
 
 
 def set_active_skin(name: str) -> SkinConfig:
-    """Switch the active skin. Returns the new SkinConfig."""
+    """Switch the active skin. Returns the new SkinConfig.
+
+    In a downstream distribution (e.g. ClawPump) the built-in ``default`` skin
+    name resolves to the distribution's own skin, so users who have
+    ``display.skin: default`` persisted in config — or who pick ``default``
+    interactively via ``/skin`` — get the distribution brand instead of vanilla
+    Hermes. The remap happens here, at the single activation chokepoint, rather
+    than by overwriting ``_BUILTIN_SKINS["default"]``: that entry is also the
+    base from which every *other* skin inherits unset keys (see
+    ``_build_skin_config``), so replacing it would bleed the distribution's
+    colors into unrelated skins. ``load_skin("default")`` therefore still
+    returns the untouched vanilla base. Degrades to a no-op on vanilla Hermes,
+    where ``_DISTRIBUTION_DEFAULT_SKIN == "default"``.
+    """
     global _active_skin, _active_skin_name
+    if name == "default" and _DISTRIBUTION_DEFAULT_SKIN != "default":
+        name = _DISTRIBUTION_DEFAULT_SKIN
     _active_skin_name = name
     _active_skin = load_skin(name)
     return _active_skin
