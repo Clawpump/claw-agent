@@ -62,6 +62,7 @@ agent), `agent_id` can usually be omitted. When unsure which agent, ask.
 | Agent cards (Laso) | `agent_card_search_merchants`, `agent_card_search_gift_cards`, `agent_card_quote`, `agent_card_create`, `agent_card_list`, `agent_card_get`, `agent_card_status`, `agent_card_data`, `agent_card_balance`, `agent_card_reveal`, `agent_card_cancel`, `agent_card_refresh`, `agent_card_withdraw`, `agent_card_withdrawals`, `agent_card_connect`, `agent_card_connect_link` |
 | Agent mail | `agent_mail_create`, `agent_mail_get_address`, `agent_mail_send`, `agent_mail_list`, `agent_mail_read` |
 | Pay.sh x402 (agent-wallet paid APIs) | `pay_sh_search`, `pay_sh_provider_details`, `pay_sh_prepare_call`, `pay_sh_execute_approved` |
+| UsePod (pay inference from the wallet) | `usepod_deposit` |
 | Wallet & billing | `get_balance`, `get_budget`, `get_usage`, `get_transactions`, `get_wallet_summaries`, `get_wallet_history`, `get_private_wallet_balance`, `get_balance_history`, `sync_billing`, `wallet_transfer` |
 | Market intelligence | `intelligence_capabilities`, `intelligence_market`, `intelligence_signals`, `intelligence_macro`, `intelligence_perps` |
 | Integrations | `list_integrations`, `save_integration`, `remove_integration`, `get_linked_accounts` |
@@ -92,6 +93,7 @@ explicit confirm flag (e.g. `confirmRisk: true`, `confirm_launch: true`,
 - Agent mail: `agent_mail_create` (one-time ~$2 USDC from the agent wallet), `agent_mail_send` (outward-facing email; paid per send via x402 from the agent wallet)
 - Wallet: `wallet_transfer` (irreversible on-chain send; destination must be on the agent's whitelist via `add_to_whitelist`; quote the exact amount, token, and address, then `confirm_transfer: true`)
 - Pay.sh x402: `pay_sh_execute_approved` (pays USDC from the agent wallet via x402 — always `pay_sh_prepare_call` first; quote the exact endpoint + price; approval codes expire in 10 minutes; requires the `x402` skill on the agent)
+- UsePod: `usepod_deposit` (top up the user's own UsePod pod from the agent's ClawPump wallet, to pay for Hermes/agent inference usage — irreversible on-chain USDC deposit of the **full** amount, no fee; the user supplies their 16-hex `deposit_code` from UsePod `/v1/register`; double-check the code and amount, then `confirm_deposit: true`)
 
 **Always get a quote/preview first** (`swap_quote` before `swap_execute`,
 `perps_order_preview` before `perps_order_execute`, `agent_card_quote` before
@@ -136,3 +138,4 @@ Common patterns:
   - **Deliverability (avoid spam):** write genuine, complete messages — a specific subject, a greeting, 2–4 sentences of real purpose, and a sign-off. Never send one-word/empty bodies or test-like "hello": low-content mail from a fresh sender domain is the #1 spam trigger. Do **not** use fake-urgent or deceptive subjects ("IMPORTANT!!", "URGENT") to game filters — that backfires and is deceptive. Tell first-time recipients to mark "Not spam" + add the address to contacts; that trains their inbox fastest.
 - **Fund an external wallet (e.g. a pay.sh allowance):** `get_balance` → `add_to_whitelist` (user-approved address) → (confirm) `wallet_transfer`. See the `pay-sh` skill.
 - **Paid x402 API call (agent wallet pays):** `pay_sh_search` → `pay_sh_provider_details` (price) → `pay_sh_prepare_call` → (confirm price with user) → `pay_sh_execute_approved`. The agent needs the `x402` skill (`update_agent` with `enabled_skills`).
+- **Pay your Hermes inference from the ClawPump wallet (UsePod):** if the user runs Hermes on their own UsePod pod (`USEPOD_API_KEY` in `~/.hermes/.env`), they can top that pod up straight from their ClawPump wallet instead of funding it manually at usepod.ai. Flow: `get_balance` (confirm the agent wallet holds enough USDC) → ask for the amount + their 16-hex `deposit_code` (from UsePod `/v1/register`) → quote both back → (confirm) `usepod_deposit` with `confirm_deposit: true`. The full amount goes on-chain into that pod (no fee); UsePod then draws inference cost from it. This is **separate** from ClawPump's own hosted chat/credits — it just pays the user's own pod from their wallet.
