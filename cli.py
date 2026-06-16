@@ -7819,6 +7819,23 @@ class HermesCLI:
                 self._close_model_picker()
                 return
             provider_data = providers[selected]
+            # Distribution overlay (e.g. ClawPump): promoted providers that need
+            # a guided setup (UsePod "Pod" — a plugin api-key provider that can't
+            # be quick-switched) route to a step-by-step setup flow instead of a
+            # failing switch. Hand the agent the configure instruction.
+            if provider_data.get("clawpump_setup"):
+                self._close_model_picker()
+                try:
+                    from hermes_cli.distribution import usepod_setup_request_message
+                    _msg = usepod_setup_request_message()
+                except Exception:
+                    _msg = (
+                        "Help me set up the Pod (UsePod) provider step by step and "
+                        "fund it from my ClawPump wallet."
+                    )
+                if hasattr(self, "_pending_input"):
+                    self._pending_input.put(_msg)
+                return
             # Use the curated model list from list_authenticated_providers()
             # (same lists as `hermes model` and gateway pickers).
             # Only fall back to the live provider catalog when the curated
@@ -7932,6 +7949,15 @@ class HermesCLI:
                 providers = build_models_payload(ctx, max_models=50)["providers"]
             except Exception:
                 providers = []
+
+            # Distribution overlay (e.g. ClawPump): pin promoted providers
+            # (UsePod "Pod") so they're discoverable. Selecting one routes to a
+            # guided setup (see _handle_model_picker_selection). No-op on vanilla.
+            try:
+                from hermes_cli.distribution import promote_picker_providers
+                providers = promote_picker_providers(ctx, providers)
+            except Exception:
+                pass
 
             if not providers:
                 _cprint("  No authenticated providers found.")

@@ -139,3 +139,34 @@ Common patterns:
 - **Fund an external wallet (e.g. a pay.sh allowance):** `get_balance` → `add_to_whitelist` (user-approved address) → (confirm) `wallet_transfer`. See the `pay-sh` skill.
 - **Paid x402 API call (agent wallet pays):** `pay_sh_search` → `pay_sh_provider_details` (price) → `pay_sh_prepare_call` → (confirm price with user) → `pay_sh_execute_approved`. The agent needs the `x402` skill (`update_agent` with `enabled_skills`).
 - **Pay your Hermes inference from the ClawPump wallet (UsePod):** if the user runs Hermes on their own UsePod pod (`USEPOD_API_KEY` in `~/.hermes/.env`), they can top that pod up straight from their ClawPump wallet instead of funding it manually at usepod.ai. Flow: `get_balance` (confirm the agent wallet holds enough USDC) → ask for the amount + their 16-hex `deposit_code` (from UsePod `/v1/register`) → quote both back → (confirm) `usepod_deposit` with `confirm_deposit: true`. The full amount goes on-chain into that pod (no fee); UsePod then draws inference cost from it. This is **separate** from ClawPump's own hosted chat/credits — it just pays the user's own pod from their wallet.
+
+## Setting up Pod (UsePod) — auto flow
+
+When a user picks **Pod** in the `/provider` (or `/model`) picker and it isn't
+configured, the picker hands you a request to set it up. Pod is a drop-in
+inference provider whose usage is paid in USDC from the user's ClawPump wallet.
+**Make this as automatic as possible — the only thing to ask is how much to
+deposit.**
+
+1. **Ask the amount.** "How much USDC do you want to put on your Pod? (e.g. 5)"
+   Optionally check `get_balance` first so you know the wallet can cover it.
+2. **Create + fund in one call** — `usepod_provision` registers a brand-new pod
+   (no signup, no human step) and funds it from the agent wallet. After the user
+   approves the amount, call `usepod_provision` with that `amount` and
+   `confirm_deposit: true`. It returns `api_token` (the pod credential) +
+   `deposit_code` and the funding `signature`.
+3. **Finish setup** — give the user their `api_token` (treat it as a secret) and
+   tell them to run **`claw model` → choose UsePod → paste it** (stored as
+   `USEPOD_API_KEY`), then restart so Hermes runs on Pod. This last step is
+   manual because the CLI loads the provider at startup.
+
+Notes:
+- If the user already has a pod, skip provisioning and just fund it: ask for the
+  amount + their 16-hex `deposit_code`, then `usepod_deposit` with
+  `confirm_deposit: true`.
+- `usepod_provision` registers the pod first and funds best-effort, so if funding
+  fails the user still gets a valid `api_token` (look for `funding_error`) — fund
+  it afterward with `usepod_deposit`.
+- This is **separate** from ClawPump's hosted chat/credits — it pays the user's
+  own pod from their wallet. Always confirm the amount before the on-chain spend
+  and report the tx signature.

@@ -228,3 +228,77 @@ def try_self_update(project_root: Any) -> bool:
         sys.exit(1)
     print("✓ ClawPump agent updated. Restart your session with `claw`.")
     return True
+
+
+# ── Model picker: promoted providers ──────────────────────────────────────
+# ClawPump pins UsePod ("Pod") to the top of the /model + /provider picker so
+# users can discover it. UsePod is a plugin api-key provider, so it can't be
+# quick-switched like a configured provider — selecting it instead triggers a
+# guided setup (the picker handler keys off the ``clawpump_setup`` flag and
+# hands the agent a "configure Pod" instruction). No-op on vanilla Hermes.
+PICKER_PROMOTED_PROVIDER = "usepod"
+# Honest, defensible value-prop (no fabricated savings %). Swap in a real,
+# backed figure here if/when there is one.
+PICKER_PROMOTED_TAGLINE = "pay-per-use USDC from your ClawPump wallet"
+PICKER_PROMOTED_DISPLAY = "Pod"
+
+
+def promote_picker_providers(ctx: Any, providers: Any) -> Any:
+    """Pin the promoted provider (UsePod) to the top of the model picker.
+
+    Adds a Pod row (seeded with the provider's fallback models) tagged with
+    ``clawpump_setup`` so the picker routes its selection to the guided setup
+    flow rather than a (failing) quick-switch. Idempotent; returns the list
+    unchanged on any error so the picker never breaks.
+    """
+    try:
+        rows = list(providers or [])
+    except Exception:
+        return providers
+
+    slug = PICKER_PROMOTED_PROVIDER
+    existing = next(
+        (r for r in rows if isinstance(r, dict) and r.get("slug") == slug), None
+    )
+    others = [
+        r for r in rows if not (isinstance(r, dict) and r.get("slug") == slug)
+    ]
+
+    if existing is None:
+        models = []
+        try:
+            from providers import get_provider_profile
+
+            pp = get_provider_profile(slug)
+            models = list(getattr(pp, "fallback_models", ()) or [])
+        except Exception:
+            models = []
+        existing = {
+            "slug": slug,
+            "name": PICKER_PROMOTED_DISPLAY,
+            "models": models,
+            "total_models": len(models),
+            "is_current": False,
+            "authenticated": False,
+        }
+
+    # Selecting Pod always routes to setup (it can't be quick-switched).
+    existing["clawpump_setup"] = True
+    name = str(existing.get("name") or PICKER_PROMOTED_DISPLAY)
+    if PICKER_PROMOTED_TAGLINE not in name:
+        existing["name"] = f"{name}  ·  {PICKER_PROMOTED_TAGLINE}"
+
+    return [existing] + others
+
+
+def usepod_setup_request_message() -> str:
+    """The instruction enqueued to the agent when a user picks Pod in the
+    picker but it isn't configured — drives the step-by-step setup + funding."""
+    return (
+        "I picked Pod (UsePod) in the model picker but it isn't set up yet. "
+        "Walk me through configuring it step by step: how to get a pod token + "
+        "deposit_code (POST https://api.usepod.ai/v1/register, or usepod.ai), how "
+        "to set it as my model provider (USEPOD_API_KEY via `claw model` → UsePod), "
+        "and then fund it from my ClawPump wallet using the usepod_deposit tool. "
+        "Ask me for the amount and deposit_code, then do the funding."
+    )
