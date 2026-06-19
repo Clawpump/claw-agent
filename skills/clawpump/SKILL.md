@@ -14,7 +14,7 @@ metadata:
 ClawPump is a Solana platform for AI agents: each agent has a wallet and can
 trade, run perps, DCA, lend, launch tokens, buy gift cards, send email from
 its own inbox, and be bought/sold on a marketplace. Its full feature set
-reaches Hermes through the **ClawPump MCP server** (131 tools, 10 resources,
+reaches Hermes through the **ClawPump MCP server** (134 tools, 10 resources,
 10 prompts).
 
 ## Enabling ClawPump
@@ -44,7 +44,7 @@ Most tools act on a specific agent. Resolve it once with `list_agents`, then
 pass `agent_id`. If the user set `CLAWPUMP_DEFAULT_AGENT` (or has exactly one
 agent), `agent_id` can usually be omitted. When unsure which agent, ask.
 
-## What's available (131 tools, 20 groups)
+## What's available (134 tools, 21 groups)
 
 | Group | Representative tools |
 |-------|----------------------|
@@ -62,7 +62,8 @@ agent), `agent_id` can usually be omitted. When unsure which agent, ask.
 | Agent cards (Laso) | `agent_card_search_merchants`, `agent_card_search_gift_cards`, `agent_card_quote`, `agent_card_create`, `agent_card_list`, `agent_card_get`, `agent_card_status`, `agent_card_data`, `agent_card_balance`, `agent_card_reveal`, `agent_card_cancel`, `agent_card_refresh`, `agent_card_withdraw`, `agent_card_withdrawals`, `agent_card_connect`, `agent_card_connect_link` |
 | Agent mail | `agent_mail_create`, `agent_mail_get_address`, `agent_mail_send`, `agent_mail_list`, `agent_mail_read` |
 | Pay.sh x402 (agent-wallet paid APIs) | `pay_sh_search`, `pay_sh_provider_details`, `pay_sh_prepare_call`, `pay_sh_execute_approved` |
-| UsePod (pay inference from the wallet) | `usepod_deposit` |
+| Dexter x402 marketplace (discovery) | `dexter_search` |
+| UsePod (run + fund your own inference pod) | `usepod_provision`, `usepod_deposit` |
 | Wallet & billing | `get_balance`, `get_budget`, `get_usage`, `get_transactions`, `get_wallet_summaries`, `get_wallet_history`, `get_private_wallet_balance`, `get_balance_history`, `sync_billing`, `wallet_transfer` |
 | Market intelligence | `intelligence_capabilities`, `intelligence_market`, `intelligence_signals`, `intelligence_macro`, `intelligence_perps` |
 | Integrations | `list_integrations`, `save_integration`, `remove_integration`, `get_linked_accounts` |
@@ -70,8 +71,10 @@ agent), `agent_id` can usually be omitted. When unsure which agent, ask.
 | Whitelist | `get_whitelist`, `add_to_whitelist`, `remove_from_whitelist` |
 | Utility | `get_model_catalog`, `get_news_feed` |
 
-By default only the **94 read-mostly** tools are enabled. The financial ones
-below are opt-in via `hermes mcp configure clawpump`.
+By default only the **95 read-mostly** tools are enabled (including
+`usepod_provision`, whose only fund-moving path is double-gated by
+`confirm_deposit`). The financial ones below are opt-in via
+`hermes mcp configure clawpump`.
 
 ## ⚠️ FINANCIAL & IRREVERSIBLE TOOLS — confirmation is mandatory
 
@@ -138,6 +141,7 @@ Common patterns:
   - **Deliverability (avoid spam):** write genuine, complete messages — a specific subject, a greeting, 2–4 sentences of real purpose, and a sign-off. Never send one-word/empty bodies or test-like "hello": low-content mail from a fresh sender domain is the #1 spam trigger. Do **not** use fake-urgent or deceptive subjects ("IMPORTANT!!", "URGENT") to game filters — that backfires and is deceptive. Tell first-time recipients to mark "Not spam" + add the address to contacts; that trains their inbox fastest.
 - **Fund an external wallet (e.g. a pay.sh allowance):** `get_balance` → `add_to_whitelist` (user-approved address) → (confirm) `wallet_transfer`. See the `pay-sh` skill.
 - **Paid x402 API call (agent wallet pays):** `pay_sh_search` → `pay_sh_provider_details` (price) → `pay_sh_prepare_call` → (confirm price with user) → `pay_sh_execute_approved`. The agent needs the `x402` skill (`update_agent` with `enabled_skills`).
+- **Discover x402 APIs on Dexter:** `dexter_search` (free, by capability — e.g. "ETH price", "image generation") returns matching resources with their payable `resourceUrl`, HTTP method, per-call USDC price, and input schema. To use one, call its `resourceUrl` with the agent's x402 rail (same custodial wallet, capped per call) — quote the price and confirm with the user first. No separate Dexter wallet.
 - **Pay your Hermes inference from the ClawPump wallet (UsePod):** if the user runs Hermes on their own UsePod pod (`USEPOD_API_KEY` in `~/.hermes/.env`), they can top that pod up straight from their ClawPump wallet instead of funding it manually at usepod.ai. Flow: `get_balance` (confirm the agent wallet holds enough USDC) → ask for the amount + their 16-hex `deposit_code` (from UsePod `/v1/register`) → quote both back → (confirm) `usepod_deposit` with `confirm_deposit: true`. The full amount goes on-chain into that pod (no fee); UsePod then draws inference cost from it. This is **separate** from ClawPump's own hosted chat/credits — it just pays the user's own pod from their wallet.
 
 ## Setting up Pod (UsePod) — auto flow
@@ -145,28 +149,39 @@ Common patterns:
 When a user picks **Pod** in the `/provider` (or `/model`) picker and it isn't
 configured, the picker hands you a request to set it up. Pod is a drop-in
 inference provider whose usage is paid in USDC from the user's ClawPump wallet.
-**Make this as automatic as possible — the only thing to ask is how much to
-deposit.**
+**Make this as automatic as possible — there is nothing to paste and nothing to
+restart: the CLI auto-applies the token and switches the session onto Pod the
+moment `usepod_provision` returns.**
 
-1. **Ask the amount.** "How much USDC do you want to put on your Pod? (e.g. 5)"
-   Optionally check `get_balance` first so you know the wallet can cover it.
+1. **Ask the amount + which agent wallet.** "How much USDC do you want to put on
+   your Pod? (e.g. 5)" — optionally check `get_balance` first so you know it can
+   cover it. Then "Which ClawPump agent wallet should fund it?" — call
+   `list_agents` and let the user pick one; use its `agent_id`. (If there is only
+   one agent you may skip the question and omit `agent_id`.)
 2. **Create + fund in one call** — `usepod_provision` registers a brand-new pod
-   (no signup, no human step) and funds it from the agent wallet. After the user
-   approves the amount, call `usepod_provision` with that `amount` and
-   `confirm_deposit: true`. It returns `api_token` (the pod credential) +
-   `deposit_code` and the funding `signature`.
-3. **Finish setup** — give the user their `api_token` (treat it as a secret) and
-   tell them to run **`claw model` → choose UsePod → paste it** (stored as
-   `USEPOD_API_KEY`), then restart so Hermes runs on Pod. This last step is
-   manual because the CLI loads the provider at startup.
+   (no signup, no human step) and funds it from the chosen agent wallet. After
+   the user approves the amount, call `usepod_provision` with that `amount`, the
+   selected `agent_id`, and `confirm_deposit: true`. It returns `api_token` (the
+   pod credential) + `deposit_code` and the funding `signature`.
+3. **It's applied automatically** — in the interactive Hermes CLI, the instant
+   `usepod_provision` returns, Hermes writes `USEPOD_API_KEY` (+
+   `USEPOD_DEPOSIT_CODE`) to `~/.hermes/.env` and switches this session onto
+   Pod. No `claw model`, no paste, no restart. Watch for Hermes' own
+   confirmation line (`✓ Now running on Pod: …`) and then tell the user "Your
+   pod is funded and this session is now running on Pod — the next message bills
+   from your pod." Report the funding `signature`. Do **not** print the
+   `api_token` (it's a secret and is already applied). (On non-interactive
+   runtimes — bots/API — the credential is saved but the live switch happens on
+   the next start; say "restart to run on Pod" instead of claiming it switched.)
 
 Notes:
-- If the user already has a pod, skip provisioning and just fund it: ask for the
-  amount + their 16-hex `deposit_code`, then `usepod_deposit` with
-  `confirm_deposit: true`.
+- **Top up an existing pod** (user already set Pod up before): skip provisioning
+  — ask for the amount + their 16-hex `deposit_code`, then `usepod_deposit` with
+  `confirm_deposit: true`. (`usepod_deposit` is a fund-mover and is opt-in: if
+  it isn't available, the user enables it via `hermes mcp configure clawpump`.)
 - `usepod_provision` registers the pod first and funds best-effort, so if funding
-  fails the user still gets a valid `api_token` (look for `funding_error`) — fund
-  it afterward with `usepod_deposit`.
+  fails the user still gets a valid `api_token` (look for `funding_error`) — the
+  token is still auto-applied; fund it afterward with `usepod_deposit`.
 - This is **separate** from ClawPump's hosted chat/credits — it pays the user's
   own pod from their wallet. Always confirm the amount before the on-chain spend
   and report the tx signature.

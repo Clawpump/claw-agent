@@ -3347,6 +3347,9 @@ class HermesCLI:
         # _handle_update_command() so the relaunch happens on the main thread,
         # not the background process_loop thread.
         self._pending_relaunch: list[str] | None = None
+        # ClawPump: queued UsePod ("Pod") provider switch, applied post-turn by
+        # _activate_pending_pod() after usepod_provision auto-applies its token.
+        self._pending_pod_activation: dict | None = None
         self._last_ctrl_c_time = 0
         self._clarify_state = None
         self._clarify_freetext = False
@@ -5141,7 +5144,10 @@ class HermesCLI:
                 skip_memory=self.ignore_rules,
                 tool_progress_callback=self._on_tool_progress,
                 tool_start_callback=self._on_tool_start if self._inline_diffs_enabled else None,
-                tool_complete_callback=self._on_tool_complete if self._inline_diffs_enabled else None,
+                # Always wired: _on_tool_complete also drives ClawPump's UsePod
+                # ("Pod") auto-apply, which must not depend on the inline-diffs
+                # display toggle. Diff rendering inside it is still gated on it.
+                tool_complete_callback=self._on_tool_complete,
                 stream_delta_callback=self._stream_delta if self.streaming_enabled else None,
                 tool_gen_callback=self._on_tool_gen_start if self.streaming_enabled else None,
             )
@@ -11102,7 +11108,41 @@ class HermesCLI:
             logger.debug("Edit snapshot capture failed for %s", function_name, exc_info=True)
 
     def _on_tool_complete(self, tool_call_id: str, function_name: str, function_args: dict, function_result: str):
-        """Render file edits with inline diff after write-capable tools complete."""
+        """Render file edits with inline diff after write-capable tools complete.
+
+        Also intercepts the ClawPump ``usepod_provision`` MCP tool to auto-apply
+        the returned Pod token (downstream overlay; no-op on vanilla Hermes).
+        Runs mid-turn in the agent thread, so it only persists credentials/config
+        and queues the live provider switch — the switch itself happens at the
+        post-turn boundary (``_activate_pending_pod``) to avoid mutating the
+        agent while it is still executing tools.
+        """
+        # ClawPump: auto-apply a freshly provisioned UsePod ("Pod") token.
+        try:
+            from hermes_cli import distribution as _dist
+
+            _tok = _dist.usepod_provision_token(function_name, function_result)
+            if _tok:
+                api_token, deposit_code = _tok
+                if _dist.persist_usepod_credentials(api_token, deposit_code):
+                    model, provider, base_url = _dist.usepod_pod_switch_target(
+                        api_token, current_model=getattr(self, "model", "") or ""
+                    )
+                    # Queue the switch; config.yaml is persisted in
+                    # _activate_pending_pod once we're on the main thread (so a
+                    # failed/invalid token never strands config on Pod).
+                    self._pending_pod_activation = {
+                        "model": model,
+                        "provider": provider,
+                        "base_url": base_url,
+                        "api_key": api_token,
+                    }
+                    _cprint(f"  ✓ Pod token applied — switching to Pod ({model}) after this turn.")
+        except Exception:
+            logger.debug("UsePod auto-apply failed", exc_info=True)
+
+        if not getattr(self, "_inline_diffs_enabled", True):
+            return
         snapshot = self._pending_edit_snapshots.pop(tool_call_id, None)
         try:
             from agent.display import render_edit_diff_with_delta
@@ -11116,6 +11156,68 @@ class HermesCLI:
             )
         except Exception:
             logger.debug("Edit diff preview failed for %s", function_name, exc_info=True)
+
+    def _activate_pending_pod(self) -> None:
+        """Apply a queued UsePod ("Pod") provider switch at a post-turn boundary.
+
+        Mirrors ``_apply_model_switch_result``: updates the live agent + CLI
+        provider state so the next turn runs on Pod, with no relaunch and no
+        manual ``claw model`` paste. Set by ``_on_tool_complete`` when
+        ``usepod_provision`` returns a token. No-op when nothing is queued.
+        """
+        pending = getattr(self, "_pending_pod_activation", None)
+        if not pending:
+            return
+        self._pending_pod_activation = None
+        try:
+            old_model = self.model
+            model = pending["model"]
+            provider = pending["provider"]
+            base_url = pending.get("base_url") or ""
+            api_key = pending.get("api_key") or ""
+
+            self.model = model
+            self.provider = provider
+            self.requested_provider = provider
+            self._explicit_api_key = api_key
+            self._explicit_base_url = base_url
+            if api_key:
+                self.api_key = api_key
+            if base_url:
+                self.base_url = base_url
+
+            if self.agent is not None:
+                try:
+                    self.agent.switch_model(
+                        new_model=model,
+                        new_provider=provider,
+                        api_key=api_key,
+                        base_url=base_url,
+                    )
+                    # switch_model derives api_mode from provider+base_url when
+                    # not passed; sync the CLI's copy so a later re-resolution
+                    # (or relaunch) doesn't carry the old provider's wire mode.
+                    self.api_mode = getattr(self.agent, "api_mode", self.api_mode)
+                except Exception as exc:
+                    _cprint(f"  ⚠ Pod switch applied to next session ({exc}).")
+
+            # Persist the provider switch (model.default + model.provider) so a
+            # later relaunch boots onto Pod. base_url is intentionally NOT
+            # persisted — it's re-derived from USEPOD_API_KEY at startup.
+            try:
+                save_config_value("model.default", model)
+                save_config_value("model.provider", provider)
+            except Exception:
+                logger.debug("Pod config persist failed", exc_info=True)
+
+            self._pending_model_switch_note = (
+                f"[Note: the session was just switched from {old_model} to {model} "
+                f"running on your UsePod Pod (paid in USDC from your ClawPump "
+                f"wallet). Adjust your self-identification accordingly.]"
+            )
+            _cprint(f"  ✓ Now running on Pod: {model}")
+        except Exception:
+            logger.debug("Pod activation failed", exc_info=True)
 
     # ====================================================================
     # Voice mode methods
@@ -12428,6 +12530,11 @@ class HermesCLI:
 
             # Update history with full conversation
             self.conversation_history = result.get("messages", self.conversation_history) if result else self.conversation_history
+
+            # ClawPump: apply a queued UsePod ("Pod") provider switch now that
+            # the agent thread has joined (safe post-turn boundary). No-op unless
+            # usepod_provision auto-applied a token during this turn.
+            self._activate_pending_pod()
 
             # If auto-compression fired mid-turn, the agent created a new
             # continuation session and mutated self.agent.session_id. Sync

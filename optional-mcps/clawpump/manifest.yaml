@@ -3,7 +3,7 @@
 manifest_version: 1
 
 name: clawpump
-description: ClawPump — Solana AI agents, trading, perps, DCA, token launch, marketplace, lending, predictions, gift cards, agent mail, x402 paid APIs, market intelligence (131 tools).
+description: ClawPump — Solana AI agents, trading, perps, DCA, token launch, marketplace, lending, predictions, gift cards, agent mail, x402 paid APIs, UsePod pods, market intelligence (134 tools).
 source: https://mcp.clawpump.tech
 
 # ClawPump ships a remote MCP server: Streamable HTTP + native OAuth 2.1 +
@@ -29,13 +29,13 @@ auth:
   # first probe / first connect.
 
 # Tool selection at install time.
-# ClawPump exposes 131 tools; 37 of them move real funds or are irreversible
+# ClawPump exposes 134 tools; 38 of them move real funds or are irreversible
 # (perps orders, swaps, DCA/limit orders, lending deposit/withdraw, prediction
 # positions, marketplace bids, external-wallet changes, wallet transfers,
 # token launches, gift-card purchases/withdrawals, agent-mail
 # provisioning/sending, x402 paid-API execution).
 # Hermes does NOT auto-gate MCP tools by their destructiveHint, so we ship a
-# read-mostly default: the 94 safe tools below are pre-checked in the install
+# read-mostly default: the 96 safe tools below are pre-checked in the install
 # checklist (and applied directly if the server can't be probed before auth).
 # Users opt into the financial tools per their threat model in the checklist,
 # or later with `hermes mcp configure clawpump`.
@@ -118,6 +118,8 @@ tools:
     - pay_sh_search
     - pay_sh_provider_details
     - pay_sh_prepare_call
+    # dexter x402 marketplace discovery (free search; paid with the agent wallet)
+    - dexter_search
     # perps (read / preview only)
     - perps_markets
     - perps_market_data
@@ -155,6 +157,12 @@ tools:
     # whitelist
     - get_whitelist
     - add_to_whitelist
+    # usepod / Pod (set up + fund the user's own inference pod from the wallet)
+    # provision is the Pod-setup entry point. Its only fund-moving path (passing
+    # an `amount`) is double-gated by `confirm_deposit: true`, so it's safe to
+    # ship enabled. The standalone top-up tool `usepod_deposit` is a pure
+    # fund-mover and stays opt-in with the other financial tools below.
+    - usepod_provision
 
 post_install: |
   On first connection Hermes opens a browser to ClawPump — log in and it
@@ -168,8 +176,8 @@ post_install: |
   dca_create, limit_order_create, jup_lend_deposit/withdraw, predictions_open/
   close, place_bid / accept_marketplace_bid, set_external_wallet,
   wallet_transfer, agent_card_create/cancel/reveal/withdraw,
-  agent_mail_create/send, pay_sh_execute_approved, and the token-launch
-  tools). Several require explicit confirm flags (confirmRisk,
+  agent_mail_create/send, pay_sh_execute_approved, usepod_deposit, and the
+  token-launch tools). Several require explicit confirm flags (confirmRisk,
   confirm_launch, confirm_spend, confirm_send, confirm_transfer,
   confirm_payment, …).
   Enable the ones you want and review every call:

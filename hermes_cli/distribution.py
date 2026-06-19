@@ -296,9 +296,162 @@ def usepod_setup_request_message() -> str:
     picker but it isn't configured — drives the step-by-step setup + funding."""
     return (
         "I picked Pod (UsePod) in the model picker but it isn't set up yet. "
-        "Walk me through configuring it step by step: how to get a pod token + "
-        "deposit_code (POST https://api.usepod.ai/v1/register, or usepod.ai), how "
-        "to set it as my model provider (USEPOD_API_KEY via `claw model` → UsePod), "
-        "and then fund it from my ClawPump wallet using the usepod_deposit tool. "
-        "Ask me for the amount and deposit_code, then do the funding."
+        "Walk me through configuring it: (1) ask how much USDC to put on the pod "
+        "(e.g. 5) — optionally check get_balance first; (2) ask which ClawPump "
+        "agent wallet should fund it — call list_agents and let me pick one by "
+        "agent_id; (3) once I approve the amount, call usepod_provision with that "
+        "amount, the chosen agent_id, and confirm_deposit: true. It registers a "
+        "fresh pod and funds it in one call. I do NOT need to paste anything: the "
+        "moment usepod_provision returns the api_token, Hermes auto-applies it "
+        "(writes USEPOD_API_KEY) and switches this session onto Pod automatically. "
+        "Just confirm the amount before the on-chain spend and report the funding "
+        "signature."
     )
+
+
+# ── UsePod "Pod" auto-apply (downstream) ──────────────────────────────────
+# When the agent calls the ClawPump MCP tool ``usepod_provision`` it gets back
+# ``{api_token, deposit_code, amount, signature, funding_error}``. Instead of
+# telling the user to paste the api_token via ``claw model``, the CLI intercepts
+# that result (cli.py ``_on_tool_complete``), persists the token, and switches
+# the live session onto Pod. These helpers hold the downstream-owned logic so
+# the cli.py touch points stay tiny and no-op on vanilla Hermes.
+USEPOD_PROVISION_TOOL_SUFFIX = "usepod_provision"
+
+
+def _is_clawpump_provision_tool(name: str) -> bool:
+    """True only for the ClawPump MCP's usepod_provision tool.
+
+    The runtime names MCP tools ``mcp_<server>_<tool>`` — the remote entry is
+    ``mcp_clawpump_usepod_provision`` and the stdio entry
+    ``mcp_clawpump_stdio_usepod_provision``; both start with ``mcp_clawpump``.
+    Binding to that namespace (rather than a bare ``endswith``) keeps a
+    differently-named MCP server from minting a result that auto-rewrites the
+    user's inference credential.
+    """
+    n = str(name or "")
+    if n == USEPOD_PROVISION_TOOL_SUFFIX:
+        return True
+    return n.startswith("mcp_clawpump") and n.endswith(USEPOD_PROVISION_TOOL_SUFFIX)
+
+
+def _unwrap_provision_payload(value: Any, _depth: int = 0):
+    """Return the innermost dict carrying ``api_token``, unwrapping envelopes.
+
+    Hermes' MCP client wraps a tool's text result as ``{"result": "<json>"}``
+    (and ``{"result": ..., "structuredContent": {...}}`` when the server sends
+    structured output) — see ``tools/mcp_tool.py``. The provision JSON therefore
+    arrives nested and string-escaped, so we re-parse ``result`` /
+    ``structuredContent`` until we find the object with the token.
+    """
+    if _depth > 4:
+        return None
+    if isinstance(value, str):
+        import json
+
+        try:
+            value = json.loads(value)
+        except Exception:
+            return None
+    if not isinstance(value, dict):
+        return None
+    if value.get("api_token"):
+        return value
+    for key in ("structuredContent", "result", "data"):
+        if key in value:
+            inner = _unwrap_provision_payload(value[key], _depth + 1)
+            if inner is not None:
+                return inner
+    return None
+
+
+def usepod_provision_token(function_name: str, function_result: Any):
+    """Extract ``(api_token, deposit_code)`` from a ``usepod_provision`` result.
+
+    Returns ``None`` unless *function_name* is the ClawPump MCP's
+    usepod_provision tool AND the result carries a usable ``api_token``.
+    Tolerant of the result arriving as a dict, a JSON string, or the
+    ``{"result": "<escaped json>"}`` envelope Hermes' MCP client emits.
+    """
+    if not _is_clawpump_provision_tool(function_name):
+        return None
+
+    api_token = ""
+    deposit_code = ""
+    payload = _unwrap_provision_payload(function_result)
+    if isinstance(payload, dict):
+        api_token = str(payload.get("api_token") or "").strip()
+        deposit_code = str(payload.get("deposit_code") or "").strip()
+
+    # Last-resort fallback: dig the fields straight out of the raw text. The
+    # quotes may be backslash-escaped (the JSON is a string value inside the
+    # ``{"result": "..."}`` envelope), so tolerate leading backslashes.
+    if not api_token and isinstance(function_result, str):
+        import re
+
+        m = re.search(r'\\*"api_token\\*"\s*:\s*\\*"([^"\\]+)', function_result)
+        if m:
+            api_token = m.group(1).strip()
+        m = re.search(r'\\*"deposit_code\\*"\s*:\s*\\*"([0-9a-fA-F]{16})', function_result)
+        if m:
+            deposit_code = m.group(1).strip()
+
+    if not api_token:
+        return None
+    # A funding_error means the deposit failed but the pod/token are still
+    # valid — applying the token is exactly right (the user funds later).
+    return (api_token, deposit_code)
+
+
+def usepod_pod_switch_target(api_token: str, current_model: str = ""):
+    """Return ``(model, provider, base_url)`` to switch onto for a Pod token.
+
+    Keeps the user's current model when UsePod's offline catalog lists it,
+    otherwise falls back to the provider's first advertised Pod model. The
+    secret-bearing base_url is derived from the token (never persisted to
+    config.yaml).
+    """
+    provider = "usepod"
+    models = []
+    try:
+        from providers import get_provider_profile
+
+        pp = get_provider_profile(provider)
+        models = list(getattr(pp, "fallback_models", ()) or [])
+    except Exception:
+        models = []
+
+    model = ""
+    cur = (current_model or "").strip()
+    if cur and cur in models:
+        model = cur
+    elif models:
+        model = models[0]
+    else:
+        model = cur or "claude-opus-4-8"
+
+    base_url = ""
+    try:
+        from hermes_cli.auth import _resolve_usepod_base_url
+
+        base_url = _resolve_usepod_base_url(api_token)
+    except Exception:
+        base_url = ""
+
+    return (model, provider, base_url)
+
+
+def persist_usepod_credentials(api_token: str, deposit_code: str = "") -> bool:
+    """Write USEPOD_API_KEY (+ deposit_code) to ~/.hermes/.env. Returns success."""
+    try:
+        from hermes_cli.config import save_env_value
+
+        save_env_value("USEPOD_API_KEY", api_token)
+        if deposit_code:
+            try:
+                save_env_value("USEPOD_DEPOSIT_CODE", deposit_code)
+            except Exception:
+                pass  # deposit_code is a convenience; the token is what matters
+        return True
+    except Exception:
+        return False
