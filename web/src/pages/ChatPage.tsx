@@ -272,32 +272,76 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       setEnd(null);
       return;
     }
-    if (!narrow) {
-      setEnd(null);
-      return;
+    if (narrow) {
+      // Mobile: a compact toggle that opens the model/tools sheet.
+      setEnd(
+        <Button
+          ghost
+          onClick={() => setMobilePanelOpenRaw(true)}
+          aria-expanded={mobilePanelOpen}
+          aria-controls="chat-side-panel"
+          className={cn(
+            "shrink-0 rounded border border-current/20",
+            "px-2 py-1 text-xs font-medium tracking-wide",
+            "text-text-secondary hover:text-midground hover:bg-midground/5",
+          )}
+        >
+          <span className="inline-flex items-center gap-1.5">
+            <PanelRight className="h-3 w-3 shrink-0" />
+            {modelToolsLabel}
+          </span>
+        </Button>,
+      );
+      return () => setEnd(null);
     }
+    // Desktop: surface the model picker + reasoning + copy-last-response in
+    // the top navbar (the page header end slot) instead of the right rail.
     setEnd(
-      <Button
-        ghost
-        onClick={() => setMobilePanelOpenRaw(true)}
-        aria-expanded={mobilePanelOpen}
-        aria-controls="chat-side-panel"
-        className={cn(
-          "shrink-0 rounded border border-current/20",
-          "px-2 py-1 text-xs font-medium tracking-wide",
-          "text-text-secondary hover:text-midground hover:bg-midground/5",
-        )}
-      >
-        <span className="inline-flex items-center gap-1.5">
-          <PanelRight className="h-3 w-3 shrink-0" />
-          {modelToolsLabel}
-        </span>
-      </Button>,
+      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+        <ChatSidebar
+          variant="bar"
+          showTools={false}
+          channel={channel}
+          profile={scopedProfile}
+          onDashboardNewSessionRequest={startFreshDashboardChat}
+        />
+        <Button
+          ghost
+          onClick={handleCopyLast}
+          title="Copy last assistant response as raw markdown"
+          aria-label="Copy last assistant response"
+          className={cn(
+            "shrink-0 normal-case tracking-normal font-normal",
+            "rounded border border-current/30 bg-black/20",
+            "px-2 py-1 text-xs",
+            "opacity-80 hover:opacity-100 hover:border-current/60",
+            "transition-opacity duration-150",
+          )}
+        >
+          <span className="inline-flex items-center gap-1.5">
+            <Copy className="h-3 w-3 shrink-0" />
+            <span className="hidden tracking-wide min-[1100px]:inline">
+              {copyState === "copied" ? "copied" : "copy last response"}
+            </span>
+          </span>
+        </Button>
+      </div>,
     );
     return () => setEnd(null);
-  }, [isActive, narrow, mobilePanelOpen, modelToolsLabel, setEnd]);
+    // handleCopyLast is a stable useCallback([]) — intentionally omitted.
+  }, [
+    isActive,
+    narrow,
+    mobilePanelOpen,
+    modelToolsLabel,
+    setEnd,
+    channel,
+    scopedProfile,
+    startFreshDashboardChat,
+    copyState,
+  ]);
 
-  const handleCopyLast = () => {
+  const handleCopyLast = useCallback(() => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     // Send the slash as a burst, wait long enough for Ink's tokenizer to
@@ -314,7 +358,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     if (copyResetRef.current) clearTimeout(copyResetRef.current);
     copyResetRef.current = setTimeout(() => setCopyState("idle"), 1500);
     termRef.current?.focus();
-  };
+  }, []);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -956,30 +1000,34 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
             </div>
           )}
 
-          <Button
-            ghost
-            onClick={handleCopyLast}
-            title="Copy last assistant response as raw markdown"
-            aria-label="Copy last assistant response"
-            className={cn(
-              "absolute z-10",
-              "normal-case tracking-normal font-normal",
-              "rounded border border-current/30",
-              "bg-black/20 backdrop-blur-sm",
-              "opacity-70 hover:opacity-100 hover:border-current/60",
-              "transition-opacity duration-150",
-              "bottom-2 right-2 px-2 py-1 text-xs sm:bottom-3 sm:right-3 sm:px-2.5 sm:py-1.5",
-              "lg:bottom-4 lg:right-4",
-            )}
-            style={{ color: TERMINAL_THEME_STATIC.foreground }}
-          >
-            <span className="inline-flex items-center gap-1.5">
-              <Copy className="h-3 w-3 shrink-0" />
-              <span className="hidden min-[400px]:inline tracking-wide">
-                {copyState === "copied" ? "copied" : "copy last response"}
+          {/* Desktop surfaces copy-last in the top navbar; keep the in-canvas
+              button on mobile, where the header only has the panel toggle. */}
+          {narrow && (
+            <Button
+              ghost
+              onClick={handleCopyLast}
+              title="Copy last assistant response as raw markdown"
+              aria-label="Copy last assistant response"
+              className={cn(
+                "absolute z-10",
+                "normal-case tracking-normal font-normal",
+                "rounded border border-current/30",
+                "bg-black/20 backdrop-blur-sm",
+                "opacity-70 hover:opacity-100 hover:border-current/60",
+                "transition-opacity duration-150",
+                "bottom-2 right-2 px-2 py-1 text-xs sm:bottom-3 sm:right-3 sm:px-2.5 sm:py-1.5",
+                "lg:bottom-4 lg:right-4",
+              )}
+              style={{ color: TERMINAL_THEME_STATIC.foreground }}
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <Copy className="h-3 w-3 shrink-0" />
+                <span className="hidden min-[400px]:inline tracking-wide">
+                  {copyState === "copied" ? "copied" : "copy last response"}
+                </span>
               </span>
-            </span>
-          </Button>
+            </Button>
+          )}
         </div>
 
         {!narrow && (
@@ -989,17 +1037,9 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
             aria-label={modelToolsLabel}
             className="flex min-h-0 shrink-0 flex-col gap-3 overflow-hidden lg:h-full lg:w-60"
           >
-            {/* Model picker (tools card hidden — keeps the rail thin). */}
-            <div className="shrink-0">
-              <ChatSidebar
-                channel={channel}
-                profile={scopedProfile}
-                onDashboardNewSessionRequest={startFreshDashboardChat}
-                showTools={false}
-              />
-            </div>
-
-            {/* Session switcher fills the remaining height below the model box. */}
+            {/* Model picker + reasoning now live in the top navbar (page
+                header) on the Chat tab; the rail is just the session list. */}
+            {/* Session switcher fills the rail. */}
             <div className="min-h-0 flex-1 overflow-hidden">
               <ChatSessionList
                 activeSessionId={resumeParam}

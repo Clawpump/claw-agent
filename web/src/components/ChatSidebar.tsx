@@ -84,6 +84,12 @@ interface ChatSidebarProps {
    * column; the model picker and its event plumbing are unaffected.
    */
   showTools?: boolean;
+  /**
+   * "rail" (default) renders the vertical card column for the right rail.
+   * "bar" renders a compact horizontal row of just the model picker +
+   * reasoning effort, for the page header on the Chat tab.
+   */
+  variant?: "rail" | "bar";
 }
 
 export function ChatSidebar({
@@ -92,6 +98,7 @@ export function ChatSidebar({
   className,
   onDashboardNewSessionRequest,
   showTools = true,
+  variant = "rail",
 }: ChatSidebarProps) {
   // `version` bumps on reconnect; gw is derived so we never call setState
   // for it inside an effect (React 19's set-state-in-effect rule). The
@@ -379,6 +386,98 @@ export function ChatSidebar({
   const modelLabel = modelName.split("/").slice(-1)[0] ?? "—";
   const banner = error ?? info.credential_warning ?? null;
 
+  // Model picker + reload-confirm portals — rendered in both layouts.
+  const dialogs = (
+    <>
+      {modelOpen && (
+        <ModelPickerDialog
+          // Same path the Models page uses (REST /api/model/set), not the
+          // sidecar config.set RPC, which didn't reliably land in the
+          // config.yaml the agent boots from. Always persisted (alwaysGlobal).
+          loader={api.getModelOptions}
+          alwaysGlobal
+          onApply={async ({ provider, model, confirmExpensiveModel }) => {
+            setModelNotice(null);
+            setPendingReloadModel(null);
+            const result = await api.setModelAssignment({
+              confirm_expensive_model: confirmExpensiveModel,
+              scope: "main",
+              provider,
+              model,
+            });
+            if (!result.confirm_required) {
+              refreshEffectiveModel();
+              setPendingReloadModel(model.split("/").slice(-1)[0]);
+            }
+            return result;
+          }}
+          onClose={() => {
+            setModelOpen(false);
+            refreshEffectiveModel();
+          }}
+        />
+      )}
+
+      <ModelReloadConfirm
+        model={pendingReloadModel}
+        onCancel={() => {
+          const m = pendingReloadModel;
+          setPendingReloadModel(null);
+          setModelNotice(
+            `Model set to ${m}. Run /new or refresh the page to apply it to this chat.`,
+          );
+        }}
+      />
+    </>
+  );
+
+  // Compact horizontal layout for the page header (Chat tab): model picker +
+  // connection state + reasoning effort, inline.
+  if (variant === "bar") {
+    return (
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="text-display hidden text-[10px] uppercase tracking-wider text-text-tertiary sm:inline">
+          model
+        </span>
+        <Button
+          ghost
+          size="sm"
+          onClick={() => setModelOpen(true)}
+          className="min-w-0 max-w-[10rem] px-1 py-0 normal-case tracking-normal text-sm font-medium hover:underline"
+          title={modelName === "—" ? "switch model" : modelName}
+        >
+          <span className="flex min-w-0 items-center gap-1">
+            <span className="truncate">{modelLabel}</span>
+            <ChevronDown className="size-3.5 shrink-0 text-text-secondary" />
+          </span>
+        </Button>
+
+        <Badge tone={STATE_TONE[state]} className="hidden shrink-0 sm:inline-flex">
+          {STATE_LABEL[state]}
+        </Badge>
+
+        {supportsReasoning && (
+          <div className="flex shrink-0 items-center gap-1">
+            <span className="text-display hidden text-[10px] uppercase tracking-wider text-text-tertiary md:inline">
+              reasoning
+            </span>
+            <ReasoningPicker
+              currentModel={modelName}
+              refreshKey={modelRefreshKey}
+              onChanged={(effort) =>
+                setModelNotice(
+                  `Reasoning effort set to ${effort}. Run /new or refresh the page to apply it to this chat.`,
+                )
+              }
+            />
+          </div>
+        )}
+
+        {dialogs}
+      </div>
+    );
+  }
+
   return (
     <aside
       className={cn(
@@ -480,48 +579,7 @@ export function ChatSidebar({
         </Card>
       )}
 
-      {modelOpen && (
-        <ModelPickerDialog
-          // Same path the Models page uses (REST /api/model/set), not the
-          // sidecar config.set RPC, which didn't reliably land in the
-          // config.yaml the agent boots from. Always persisted (alwaysGlobal).
-          loader={api.getModelOptions}
-          alwaysGlobal
-          onApply={async ({ provider, model, confirmExpensiveModel }) => {
-            setModelNotice(null);
-            setPendingReloadModel(null);
-            const result = await api.setModelAssignment({
-              confirm_expensive_model: confirmExpensiveModel,
-              scope: "main",
-              provider,
-              model,
-            });
-            // confirm_required => the dialog shows the expensive-model prompt
-            // and calls back; don't announce until the user confirms.
-            if (!result.confirm_required) {
-              refreshEffectiveModel();
-              // Ask before reloading: applying the model starts a fresh chat.
-              setPendingReloadModel(model.split("/").slice(-1)[0]);
-            }
-            return result;
-          }}
-          onClose={() => {
-            setModelOpen(false);
-            refreshEffectiveModel();
-          }}
-        />
-      )}
-
-      <ModelReloadConfirm
-        model={pendingReloadModel}
-        onCancel={() => {
-          const m = pendingReloadModel;
-          setPendingReloadModel(null);
-          setModelNotice(
-            `Model set to ${m}. Run /new or refresh the page to apply it to this chat.`,
-          );
-        }}
-      />
+      {dialogs}
     </aside>
   );
 }
