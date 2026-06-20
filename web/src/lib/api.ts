@@ -312,6 +312,7 @@ function appendProfileParam(url: string, profile?: string): string {
 
 export interface AgentWalletBalance {
   agent_id: string;
+  name?: string | null;
   wallet_address: string | null;
   sol_balance: number | null;
   usdc_balance: number | null;
@@ -324,10 +325,32 @@ export interface WalletBalancesResponse {
   wallets: AgentWalletBalance[];
 }
 
+export interface WalletTransferInput {
+  agent_id: string;
+  to: string;
+  amount: number;
+  token: string;
+  add_to_whitelist?: boolean;
+  label?: string;
+}
+
+export interface WalletTransferResponse {
+  ok: boolean;
+  error?: string;
+  code?: string;
+  result?: unknown;
+}
+
 export const api = {
   getStatus: () => fetchJSON<StatusResponse>("/api/status"),
   getWalletBalances: () =>
     fetchJSON<WalletBalancesResponse>("/api/wallet/balances"),
+  transferWallet: (body: WalletTransferInput) =>
+    fetchJSON<WalletTransferResponse>("/api/wallet/transfer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
   /**
    * Identity probe for the dashboard auth gate (Phase 7).
    *

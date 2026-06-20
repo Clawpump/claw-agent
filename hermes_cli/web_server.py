@@ -12047,19 +12047,52 @@ async def set_dashboard_theme(body: ThemeSetBody):
 # the backend only needs the id allow-list so it can reject anything not
 # in the vetted catalog (the font's webfont URL is injected as a <link>,
 # so we never accept an arbitrary user-supplied id/URL here).
-@app.get("/api/wallet/balances")
-def get_wallet_balances():
-    """Agent wallet balances (address + SOL + USDC) via the ClawPump MCP.
-
-    Calls the ClawPump ``get_wallet_summaries`` tool over a short-lived MCP
-    session (OAuth/API-key from ``hermes clawpump setup``). Read-only.
-    Sync def so FastAPI runs it in a threadpool — the MCP call is blocking.
-    """
-    from hermes_cli.mcp_config import _get_mcp_servers, _call_single_tool
+def _clawpump_mcp():
+    """Return (server_name, config) for the configured ClawPump MCP, else (None, None)."""
+    from hermes_cli.mcp_config import _get_mcp_servers
 
     servers = _get_mcp_servers()
     name = next((n for n in ("clawpump", "clawpump-stdio") if n in servers), None)
-    if not name:
+    return (name, servers[name]) if name else (None, None)
+
+
+def _parse_mcp_json(text: str) -> Any:
+    """Parse an MCP tool text result into JSON, unwrapping a common
+    ``{result|structuredContent|wallets}`` double-wrap when present."""
+    if not text:
+        return None
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    if isinstance(data, dict):
+        inner = (
+            data.get("result")
+            or data.get("structuredContent")
+            or data.get("wallets")
+        )
+        if isinstance(inner, str):
+            try:
+                inner = json.loads(inner)
+            except (ValueError, TypeError):
+                inner = None
+        if inner is not None:
+            data = inner
+    return data
+
+
+@app.get("/api/wallet/balances")
+def get_wallet_balances():
+    """Agent wallet balances (name + address + SOL + USDC) via the ClawPump MCP.
+
+    Calls ``get_wallet_summaries`` (and ``list_agents`` for display names) over
+    a short-lived MCP session (OAuth/API-key from ``hermes clawpump setup``).
+    Read-only. Sync def so FastAPI runs it in a threadpool — MCP call blocks.
+    """
+    from hermes_cli.mcp_config import _call_single_tool
+
+    srv_name, srv_cfg = _clawpump_mcp()
+    if not srv_name:
         return {
             "ok": False,
             "error": "ClawPump MCP is not configured. Run `hermes clawpump setup`.",
@@ -12067,33 +12100,91 @@ def get_wallet_balances():
         }
 
     try:
-        text = _call_single_tool(name, servers[name], "get_wallet_summaries", {})
+        text = _call_single_tool(srv_name, srv_cfg, "get_wallet_summaries", {})
     except Exception as exc:  # surface any connection / tool error to the UI
         return {"ok": False, "error": str(exc), "wallets": []}
 
-    # ClawPump returns a JSON array of {agent_id, wallet_address, sol_balance,
-    # usdc_balance, updated_at}; tolerate a {wallets|result|structuredContent}
-    # wrapper (MCP results are sometimes double-wrapped).
-    data: Any = None
-    if text:
-        try:
-            data = json.loads(text)
-        except (ValueError, TypeError):
-            data = None
-    if isinstance(data, dict):
-        inner = (
-            data.get("wallets")
-            or data.get("result")
-            or data.get("structuredContent")
-        )
-        if isinstance(inner, str):
-            try:
-                inner = json.loads(inner)
-            except (ValueError, TypeError):
-                inner = None
-        data = inner
+    data = _parse_mcp_json(text)
     wallets = data if isinstance(data, list) else []
+
+    # Enrich with the agent's display name — the summaries only carry the
+    # agent_id UUID. Best-effort: a failure here just leaves ``name`` unset.
+    try:
+        agents = _parse_mcp_json(_call_single_tool(srv_name, srv_cfg, "list_agents", {}))
+        if isinstance(agents, dict):
+            agents = agents.get("agents")
+        names = {
+            a["id"]: a.get("name")
+            for a in (agents or [])
+            if isinstance(a, dict) and a.get("id")
+        }
+        for w in wallets:
+            if isinstance(w, dict):
+                w["name"] = names.get(w.get("agent_id"))
+    except Exception:
+        pass
+
     return {"ok": True, "wallets": wallets}
+
+
+class WalletTransferBody(BaseModel):
+    agent_id: str
+    to: str
+    amount: float
+    token: str = "SOL"
+    add_to_whitelist: bool = False
+    label: Optional[str] = None
+
+
+@app.post("/api/wallet/transfer")
+def post_wallet_transfer(body: WalletTransferBody):
+    """Transfer SOL or USDC from an agent's on-chain wallet via the ClawPump MCP.
+
+    Irreversible. ``wallet_transfer`` is whitelist-gated; pass
+    ``add_to_whitelist=true`` to whitelist the destination first (the dashboard
+    asks for explicit confirmation before calling this). Sync def — MCP blocks.
+    """
+    from hermes_cli.mcp_config import _call_single_tool
+
+    srv_name, srv_cfg = _clawpump_mcp()
+    if not srv_name:
+        return {"ok": False, "error": "ClawPump MCP is not configured."}
+
+    to = (body.to or "").strip()
+    if not to:
+        return {"ok": False, "error": "Destination address is required."}
+    if not body.amount or body.amount <= 0:
+        return {"ok": False, "error": "Amount must be greater than zero."}
+
+    if body.add_to_whitelist:
+        try:
+            _call_single_tool(srv_name, srv_cfg, "add_to_whitelist", {
+                "agent_id": body.agent_id,
+                "address": to,
+                **({"label": body.label} if body.label else {}),
+            })
+        except Exception as exc:
+            return {"ok": False, "error": f"Whitelist failed: {exc}"}
+
+    try:
+        text = _call_single_tool(srv_name, srv_cfg, "wallet_transfer", {
+            "agent_id": body.agent_id,
+            "to": to,
+            "amount": body.amount,
+            "token": (body.token or "SOL").upper(),
+            "confirm_transfer": True,
+        })
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+    result = _parse_mcp_json(text)
+    if isinstance(result, dict) and result.get("error"):
+        return {
+            "ok": False,
+            "error": result.get("error"),
+            "code": result.get("code"),
+        }
+    return {"ok": True, "result": result}
 
 
 _FONT_DEFAULT_ID = "space-grotesk"
