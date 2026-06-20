@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
-import { Check, Copy, ExternalLink, Search, Zap } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Check, Copy, ExternalLink, Search, Sparkles, Zap } from "lucide-react";
 import { api } from "@/lib/api";
 import type { X402Result } from "@/lib/api";
 import { Button } from "@nous-research/ui/ui/components/button";
@@ -44,7 +45,14 @@ function CopyButton({ value }: { value: string }) {
   );
 }
 
+function buildPrompt(r: X402Result): string {
+  const price = bestPrice(r);
+  const name = r.name ? ` ("${r.name}"${price ? `, ${price}` : ""})` : "";
+  return `Use this x402 API and pay it with my ClawPump wallet: ${r.resourceUrl}${name}. First check what inputs it needs, then call it.`;
+}
+
 export default function X402Page() {
+  const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<X402Result[]>([]);
   const [loading, setLoading] = useState(false);
@@ -171,6 +179,21 @@ export default function X402Page() {
                         <ExternalLink className="h-3 w-3 shrink-0" />
                       </a>
                       <CopyButton value={r.resourceUrl} />
+                    </div>
+                  )}
+                  {r.resourceUrl && (
+                    <div className="pt-1">
+                      <Button
+                        size="sm"
+                        onClick={() =>
+                          navigate(
+                            `/chat?prompt=${encodeURIComponent(buildPrompt(r))}`,
+                          )
+                        }
+                        prefix={<Sparkles className="h-4 w-4" />}
+                      >
+                        Use in chat
+                      </Button>
                     </div>
                   )}
                 </CardContent>

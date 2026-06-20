@@ -360,6 +360,42 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     termRef.current?.focus();
   }, []);
 
+  // Pre-prompt injection: when arriving at /chat?prompt=... (e.g. from the x402
+  // module's "Use in chat" button), type the text into the TUI input once the
+  // PTY is up — WITHOUT a trailing Return, so the user reviews/edits and sends
+  // it. The param is dropped after injection so a reconnect doesn't retype it.
+  useEffect(() => {
+    const p = searchParams.get("prompt");
+    if (!p || !isActive) return;
+    let cancelled = false;
+    let sendTimer = 0;
+    const poll = window.setInterval(() => {
+      const s = wsRef.current;
+      if (s && s.readyState === WebSocket.OPEN && !sendTimer) {
+        window.clearInterval(poll);
+        // Small settle delay so Ink's input line is mounted on a fresh spawn.
+        sendTimer = window.setTimeout(() => {
+          if (cancelled) return;
+          const ws = wsRef.current;
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(p);
+            termRef.current?.focus();
+          }
+          const next = new URLSearchParams(searchParams);
+          next.delete("prompt");
+          setSearchParams(next, { replace: true });
+        }, 1000);
+      }
+    }, 250);
+    const giveUp = window.setTimeout(() => window.clearInterval(poll), 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+      window.clearTimeout(giveUp);
+      if (sendTimer) window.clearTimeout(sendTimer);
+    };
+  }, [searchParams, isActive, setSearchParams]);
+
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
