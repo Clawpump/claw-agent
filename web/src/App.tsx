@@ -49,6 +49,7 @@ import {
   Star,
   Terminal,
   Users,
+  Wallet,
   Webhook,
   Wrench,
   X,
@@ -73,6 +74,7 @@ import { ProfileScopeBanner } from "@/components/ProfileScopeBanner";
 import { useSystemActions } from "@/contexts/useSystemActions";
 import type { SystemAction } from "@/contexts/system-actions-context";
 import ConfigPage from "@/pages/ConfigPage";
+import WalletPage from "@/pages/WalletPage";
 import DocsPage from "@/pages/DocsPage";
 import EnvPage from "@/pages/EnvPage";
 import FilesPage from "@/pages/FilesPage";
@@ -132,6 +134,7 @@ const CHAT_NAV_ITEM: NavItem = {
  */
 const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/": RootRedirect,
+  "/wallet": WalletPage,
   "/sessions": SessionsPage,
   "/files": FilesPage,
   "/analytics": AnalyticsPage,
@@ -161,6 +164,7 @@ function ChatRouteSink() {
 }
 
 const BUILTIN_NAV_REST: NavItem[] = [
+  { path: "/wallet", label: "Wallet", icon: Wallet },
   {
     path: "/sessions",
     labelKey: "sessions",

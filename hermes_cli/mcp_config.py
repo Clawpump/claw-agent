@@ -262,6 +262,65 @@ def _probe_single_server(
     return tools_found
 
 
+def _call_single_tool(
+    name: str,
+    config: dict,
+    tool_name: str,
+    arguments: Optional[dict] = None,
+    connect_timeout: float = 30,
+) -> str:
+    """Temporarily connect to one MCP server, call one tool, disconnect.
+
+    Returns the concatenated text of the tool's result content blocks
+    (usually a JSON string). Raises on connection failure or a tool error.
+    Blocking — call from a thread, not an async event loop.
+    """
+    issues = validate_mcp_server_entry(name, config)
+    if issues:
+        raise ValueError("; ".join(issues))
+
+    from tools.mcp_tool import (
+        _ensure_mcp_loop,
+        _run_on_mcp_loop,
+        _connect_server,
+        _stop_mcp_loop_if_idle,
+    )
+
+    config = _resolve_mcp_server_config(config)
+    _ensure_mcp_loop()
+
+    out: Dict[str, Any] = {"text": "", "error": None}
+
+    async def _call():
+        server = await asyncio.wait_for(
+            _connect_server(name, config), timeout=connect_timeout
+        )
+        try:
+            result = await server.session.call_tool(
+                tool_name, arguments=arguments or {}
+            )
+            text = "".join(
+                b.text for b in (result.content or []) if hasattr(b, "text")
+            )
+            if getattr(result, "isError", False):
+                out["error"] = text or "MCP tool returned an error"
+            else:
+                out["text"] = text
+        finally:
+            await server.shutdown()
+
+    try:
+        _run_on_mcp_loop(_call(), timeout=connect_timeout + 30)
+    except BaseException as exc:
+        raise _unwrap_exception_group(exc) from None
+    finally:
+        _stop_mcp_loop_if_idle()
+
+    if out["error"]:
+        raise RuntimeError(out["error"])
+    return out["text"]
+
+
 def _oauth_tokens_present(name: str) -> bool:
     """Return True if an OAuth token file exists on disk for ``name``.
 

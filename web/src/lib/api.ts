@@ -310,8 +310,24 @@ function appendProfileParam(url: string, profile?: string): string {
   return `${url}${url.includes("?") ? "&" : "?"}profile=${encodeURIComponent(profile)}`;
 }
 
+export interface AgentWalletBalance {
+  agent_id: string;
+  wallet_address: string | null;
+  sol_balance: number | null;
+  usdc_balance: number | null;
+  updated_at: string;
+}
+
+export interface WalletBalancesResponse {
+  ok: boolean;
+  error?: string;
+  wallets: AgentWalletBalance[];
+}
+
 export const api = {
   getStatus: () => fetchJSON<StatusResponse>("/api/status"),
+  getWalletBalances: () =>
+    fetchJSON<WalletBalancesResponse>("/api/wallet/balances"),
   /**
    * Identity probe for the dashboard auth gate (Phase 7).
    *

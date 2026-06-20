@@ -12047,12 +12047,62 @@ async def set_dashboard_theme(body: ThemeSetBody):
 # the backend only needs the id allow-list so it can reject anything not
 # in the vetted catalog (the font's webfont URL is injected as a <link>,
 # so we never accept an arbitrary user-supplied id/URL here).
-_FONT_DEFAULT_ID = "theme"
+@app.get("/api/wallet/balances")
+def get_wallet_balances():
+    """Agent wallet balances (address + SOL + USDC) via the ClawPump MCP.
+
+    Calls the ClawPump ``get_wallet_summaries`` tool over a short-lived MCP
+    session (OAuth/API-key from ``hermes clawpump setup``). Read-only.
+    Sync def so FastAPI runs it in a threadpool — the MCP call is blocking.
+    """
+    from hermes_cli.mcp_config import _get_mcp_servers, _call_single_tool
+
+    servers = _get_mcp_servers()
+    name = next((n for n in ("clawpump", "clawpump-stdio") if n in servers), None)
+    if not name:
+        return {
+            "ok": False,
+            "error": "ClawPump MCP is not configured. Run `hermes clawpump setup`.",
+            "wallets": [],
+        }
+
+    try:
+        text = _call_single_tool(name, servers[name], "get_wallet_summaries", {})
+    except Exception as exc:  # surface any connection / tool error to the UI
+        return {"ok": False, "error": str(exc), "wallets": []}
+
+    # ClawPump returns a JSON array of {agent_id, wallet_address, sol_balance,
+    # usdc_balance, updated_at}; tolerate a {wallets|result|structuredContent}
+    # wrapper (MCP results are sometimes double-wrapped).
+    data: Any = None
+    if text:
+        try:
+            data = json.loads(text)
+        except (ValueError, TypeError):
+            data = None
+    if isinstance(data, dict):
+        inner = (
+            data.get("wallets")
+            or data.get("result")
+            or data.get("structuredContent")
+        )
+        if isinstance(inner, str):
+            try:
+                inner = json.loads(inner)
+            except (ValueError, TypeError):
+                inner = None
+        data = inner
+    wallets = data if isinstance(data, list) else []
+    return {"ok": True, "wallets": wallets}
+
+
+_FONT_DEFAULT_ID = "space-grotesk"
 _FONT_CHOICES = frozenset({
     "system-sans", "system-serif", "system-mono",
     "inter", "ibm-plex-sans", "work-sans", "atkinson-hyperlegible", "dm-sans",
     "spectral", "fraunces", "source-serif",
     "jetbrains-mono", "ibm-plex-mono", "space-mono",
+    "space-grotesk",
 })
 
 

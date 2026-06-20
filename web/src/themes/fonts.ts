@@ -61,6 +61,13 @@ export const FONT_CHOICES: FontChoice[] = [
 
   // ── Sans ────────────────────────────────────────────────────────────────
   {
+    id: "space-grotesk",
+    label: "Space Grotesk",
+    category: "sans",
+    stack: `"Space Grotesk", ${SYSTEM_SANS}`,
+    fontUrl: GF("Space+Grotesk:wght@400;500;600;700"),
+  },
+  {
     id: "inter",
     label: "Inter",
     category: "sans",
