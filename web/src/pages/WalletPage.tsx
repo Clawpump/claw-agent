@@ -354,7 +354,7 @@ export default function WalletPage() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex items-center gap-2">
-                  <code className="rounded bg-muted px-2 py-1 font-mono text-sm">
+                  <code className="rounded-md border border-emerald-500/40 bg-black/50 px-2.5 py-1 font-mono text-sm font-medium text-emerald-300">
                     {w.wallet_address ? shortAddress(w.wallet_address) : "—"}
                   </code>
                   {w.wallet_address && <CopyButton value={w.wallet_address} />}

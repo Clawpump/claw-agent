@@ -50,8 +50,8 @@ export const ga: Translations = {
   },
 
   app: {
-    brand: "Hermes Agent",
-    brandShort: "HA",
+    brand: "Claw Agent",
+    brandShort: "CA",
     closeNavigation: "Dún an nascleanúint",
     closeModelTools: "Dún an samhail agus na huirlisí",
     footer: {

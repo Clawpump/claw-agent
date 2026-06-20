@@ -50,8 +50,8 @@ export const af: Translations = {
   },
 
   app: {
-    brand: "Hermes Agent",
-    brandShort: "HA",
+    brand: "Claw Agent",
+    brandShort: "CA",
     closeNavigation: "Maak navigasie toe",
     closeModelTools: "Maak model en gereedskap toe",
     footer: {

@@ -50,8 +50,8 @@ export const tr: Translations = {
   },
 
   app: {
-    brand: "Hermes Agent",
-    brandShort: "HA",
+    brand: "Claw Agent",
+    brandShort: "CA",
     closeNavigation: "Gezintiyi kapat",
     closeModelTools: "Modeli ve araçları kapat",
     footer: {

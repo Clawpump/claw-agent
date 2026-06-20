@@ -50,8 +50,8 @@ export const uk: Translations = {
   },
 
   app: {
-    brand: "Hermes Agent",
-    brandShort: "HA",
+    brand: "Claw Agent",
+    brandShort: "CA",
     closeNavigation: "Закрити навігацію",
     closeModelTools: "Закрити модель та інструменти",
     footer: {
