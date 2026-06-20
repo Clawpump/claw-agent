@@ -119,6 +119,21 @@ export function Backdrop() {
         }}
       />
 
+      {/* ClawPump claw watermark. Sits above the z-200 inversion layer so it
+          isn't colour-flipped, and is pointer-events-none + very low opacity
+          so it reads as a subtle brand mark without blocking any UI. */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 z-[202]"
+        style={{
+          backgroundImage: 'url("/claw-bg.webp")',
+          backgroundRepeat: "no-repeat",
+          backgroundPosition: "center 55%",
+          backgroundSize: "min(58vmin, 460px)",
+          opacity: 0.05,
+        }}
+      />
+
       {gpuTier > 0 && (
         <div
           aria-hidden

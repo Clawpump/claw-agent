@@ -59,8 +59,8 @@
   --midground: color-mix(in srgb, #ffe6cb 100%, transparent);
   --midground-base: #ffe6cb;
   --midground-alpha: 1;
-  --background: color-mix(in srgb, #0e0f12 100%, transparent);
-  --background-base: #0e0f12;
+  --background: color-mix(in srgb, #0c0f0b 100%, transparent);
+  --background-base: #0c0f0b;
   --background-alpha: 1;
 
   /* Consumed by <Backdrop />; also theme-switchable. */
