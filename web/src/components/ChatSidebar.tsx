@@ -455,6 +455,7 @@ export function ChatSidebar({
 
         {supportsReasoning && (
           <ReasoningPicker
+            compact
             currentModel={modelName}
             refreshKey={modelRefreshKey}
             onChanged={(effort) =>

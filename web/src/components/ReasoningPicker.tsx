@@ -24,12 +24,23 @@ import { Select, SelectOption } from "@nous-research/ui/ui/components/select";
 import { Brain } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import {
   EFFORT_OPTIONS,
   normalizeEffort,
   VALID_EFFORTS,
 } from "@/lib/reasoning-effort";
+
+/** Short labels for the compact (navbar) segmented control. */
+const EFFORT_SHORT: Record<string, string> = {
+  none: "Off",
+  minimal: "Min",
+  low: "Low",
+  medium: "Med",
+  high: "High",
+  xhigh: "Max",
+};
 
 interface ReasoningPickerProps {
   /** Current model string from config — re-reads the saved effort when it
@@ -40,12 +51,17 @@ interface ReasoningPickerProps {
   /** Called after a successful change so the sidebar can show an "apply on
    *  /new or reload" notice, matching the model-switch UX. */
   onChanged?: (effort: string) => void;
+  /** Render an inline segmented control (no dropdown) for the page-header bar,
+   *  where an absolutely-positioned Select would be clipped by the header's
+   *  overflow. */
+  compact?: boolean;
 }
 
 export function ReasoningPicker({
   currentModel,
   refreshKey = 0,
   onChanged,
+  compact = false,
 }: ReasoningPickerProps) {
   const [effort, setEffort] = useState("medium");
   const [loaded, setLoaded] = useState(false);
@@ -99,6 +115,34 @@ export function ReasoningPicker({
     },
     [effort, onChanged],
   );
+
+  if (compact) {
+    return (
+      <div className="flex shrink-0 items-center gap-1.5 text-xs">
+        <Brain className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+        <div className="flex items-center gap-0.5 rounded-md border border-current/20 p-0.5">
+          {EFFORT_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              disabled={!loaded || saving}
+              onClick={() => onSelect(opt.value)}
+              title={opt.label}
+              aria-pressed={effort === opt.value}
+              className={cn(
+                "rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors disabled:opacity-50",
+                effort === opt.value
+                  ? "bg-midground/15 text-midground"
+                  : "text-text-secondary hover:text-midground",
+              )}
+            >
+              {EFFORT_SHORT[opt.value] ?? opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center gap-2 px-3 py-2 text-xs">
