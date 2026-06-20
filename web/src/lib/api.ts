@@ -341,10 +341,40 @@ export interface WalletTransferResponse {
   result?: unknown;
 }
 
+export interface X402Pricing {
+  network?: string;
+  asset?: string;
+  scheme?: string;
+  priceUsdc?: number | null;
+  priceLabel?: string;
+}
+
+export interface X402Result {
+  resourceUrl?: string;
+  name?: string;
+  description?: string;
+  category?: string;
+  method?: string;
+  host?: string;
+  match?: string;
+  qualityScore?: number | null;
+  verified?: boolean;
+  pricing?: X402Pricing[];
+}
+
+export interface X402SearchResponse {
+  ok: boolean;
+  error?: string;
+  query?: string;
+  results: X402Result[];
+}
+
 export const api = {
   getStatus: () => fetchJSON<StatusResponse>("/api/status"),
   getWalletBalances: () =>
     fetchJSON<WalletBalancesResponse>("/api/wallet/balances"),
+  searchX402: (q: string) =>
+    fetchJSON<X402SearchResponse>(`/api/x402/search?q=${encodeURIComponent(q)}`),
   transferWallet: (body: WalletTransferInput) =>
     fetchJSON<WalletTransferResponse>("/api/wallet/transfer", {
       method: "POST",

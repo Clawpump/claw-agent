@@ -12187,6 +12187,45 @@ def post_wallet_transfer(body: WalletTransferBody):
     return {"ok": True, "result": result}
 
 
+@app.get("/api/x402/search")
+def x402_search(q: str = ""):
+    """Search the x402 marketplace via the ClawPump MCP (``dexter_search``).
+
+    Free/read-only discovery: returns paid x402 resources (URL, price, schema)
+    the agent could pay from its own ClawPump wallet. Sync def — MCP blocks.
+    """
+    from hermes_cli.mcp_config import _call_single_tool
+
+    query = (q or "").strip()
+    if not query:
+        return {"ok": True, "query": "", "results": []}
+
+    srv_name, srv_cfg = _clawpump_mcp()
+    if not srv_name:
+        return {
+            "ok": False,
+            "error": "ClawPump MCP is not configured. Run `hermes clawpump setup`.",
+            "results": [],
+        }
+
+    try:
+        text = _call_single_tool(srv_name, srv_cfg, "dexter_search", {"query": query})
+    except Exception as exc:  # surface any connection / tool error to the UI
+        return {"ok": False, "error": str(exc), "results": []}
+
+    data = _parse_mcp_json(text)
+    if isinstance(data, dict):
+        if isinstance(data.get("error"), str) and data["error"]:
+            return {"ok": False, "error": data["error"], "results": []}
+        results = data.get("results")
+        results = results if isinstance(results, list) else []
+    elif isinstance(data, list):
+        results = data
+    else:
+        results = []
+    return {"ok": True, "query": query, "results": results}
+
+
 _FONT_DEFAULT_ID = "space-grotesk"
 _FONT_CHOICES = frozenset({
     "system-sans", "system-serif", "system-mono",
