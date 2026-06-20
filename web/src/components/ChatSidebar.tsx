@@ -436,14 +436,11 @@ export function ChatSidebar({
   if (variant === "bar") {
     return (
       <div className="flex min-w-0 items-center gap-2">
-        <span className="text-display hidden text-[10px] uppercase tracking-wider text-text-tertiary sm:inline">
-          model
-        </span>
         <Button
           ghost
           size="sm"
           onClick={() => setModelOpen(true)}
-          className="min-w-0 max-w-[10rem] px-1 py-0 normal-case tracking-normal text-sm font-medium hover:underline"
+          className="min-w-0 max-w-[9rem] px-1 py-0 normal-case tracking-normal text-sm font-medium hover:underline"
           title={modelName === "—" ? "switch model" : modelName}
         >
           <span className="flex min-w-0 items-center gap-1">
@@ -452,25 +449,20 @@ export function ChatSidebar({
           </span>
         </Button>
 
-        <Badge tone={STATE_TONE[state]} className="hidden shrink-0 sm:inline-flex">
+        <Badge tone={STATE_TONE[state]} className="hidden shrink-0 md:inline-flex">
           {STATE_LABEL[state]}
         </Badge>
 
         {supportsReasoning && (
-          <div className="flex shrink-0 items-center gap-1">
-            <span className="text-display hidden text-[10px] uppercase tracking-wider text-text-tertiary md:inline">
-              reasoning
-            </span>
-            <ReasoningPicker
-              currentModel={modelName}
-              refreshKey={modelRefreshKey}
-              onChanged={(effort) =>
-                setModelNotice(
-                  `Reasoning effort set to ${effort}. Run /new or refresh the page to apply it to this chat.`,
-                )
-              }
-            />
-          </div>
+          <ReasoningPicker
+            currentModel={modelName}
+            refreshKey={modelRefreshKey}
+            onChanged={(effort) =>
+              setModelNotice(
+                `Reasoning effort set to ${effort}. Run /new or refresh the page to apply it to this chat.`,
+              )
+            }
+          />
         )}
 
         {dialogs}

@@ -71,7 +71,10 @@ export function PageHeaderProvider({
           >
             <div
               className={cn(
-                "flex min-w-0 flex-1 gap-2 sm:gap-3",
+                "flex min-w-0 gap-2 sm:gap-3",
+                // On the Chat tab the centered controls own the middle, so the
+                // title stays its natural width on the left instead of growing.
+                isChatRoute ? "shrink-0" : "flex-1",
                 afterTitle && isEnvRoute
                   ? "flex-col items-start sm:flex-row sm:items-center"
                   : afterTitle
@@ -109,10 +112,10 @@ export function PageHeaderProvider({
             {end ? (
               <div
                 className={cn(
-                  "flex min-w-0 sm:max-w-md sm:flex-1",
+                  "flex min-w-0",
                   isChatRoute
-                    ? "w-auto shrink-0 justify-end"
-                    : "w-full justify-start sm:justify-end",
+                    ? "flex-1 justify-center"
+                    : "w-full justify-start sm:max-w-md sm:flex-1 sm:justify-end",
                 )}
               >
                 {end}
