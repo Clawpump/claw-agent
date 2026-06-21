@@ -120,6 +120,8 @@ tools:
     - pay_sh_prepare_call
     # dexter x402 marketplace discovery (free search; paid with the agent wallet)
     - dexter_search
+    # open x402: free URL preview (x402_pay is financial → opt-in, see below)
+    - x402_pay_check
     # perps (read / preview only)
     - perps_markets
     - perps_market_data
@@ -176,8 +178,8 @@ post_install: |
   dca_create, limit_order_create, jup_lend_deposit/withdraw, predictions_open/
   close, place_bid / accept_marketplace_bid, set_external_wallet,
   wallet_transfer, agent_card_create/cancel/reveal/withdraw,
-  agent_mail_create/send, pay_sh_execute_approved, usepod_deposit, and the
-  token-launch tools). Several require explicit confirm flags (confirmRisk,
+  agent_mail_create/send, pay_sh_execute_approved, x402_pay, usepod_deposit,
+  and the token-launch tools). Several require explicit confirm flags (confirmRisk,
   confirm_launch, confirm_spend, confirm_send, confirm_transfer,
   confirm_payment, …).
   Enable the ones you want and review every call:

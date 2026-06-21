@@ -116,6 +116,8 @@ tools:
     - pay_sh_prepare_call
     # dexter x402 marketplace discovery (free search; paid with the agent wallet)
     - dexter_search
+    # open x402: free URL preview (x402_pay is financial → opt-in)
+    - x402_pay_check
     # perps (read / preview only)
     - perps_markets
     - perps_market_data
