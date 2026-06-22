@@ -12188,17 +12188,19 @@ def post_wallet_transfer(body: WalletTransferBody):
 
 
 @app.get("/api/x402/search")
-def x402_search(q: str = ""):
+def x402_search(q: str = "", network: str = "solana"):
     """Search the x402 marketplace via the ClawPump MCP (``dexter_search``).
 
-    Free/read-only discovery: returns paid x402 resources (URL, price, schema)
-    the agent could pay from its own ClawPump wallet. Sync def — MCP blocks.
+    Discovery (Dexter + PayAI aggregation) and ``network`` filtering live in the
+    MCP tool — the dashboard just forwards ``query`` + ``network`` and renders.
+    The ClawPump wallet settles x402 in USDC on Solana, so the default is
+    ``solana``; pass ``network=all`` to see every chain. Sync def — MCP blocks.
     """
     from hermes_cli.mcp_config import _call_single_tool
 
     query = (q or "").strip()
     if not query:
-        return {"ok": True, "query": "", "results": []}
+        return {"ok": True, "query": "", "network": network, "results": []}
 
     srv_name, srv_cfg = _clawpump_mcp()
     if not srv_name:
@@ -12209,7 +12211,9 @@ def x402_search(q: str = ""):
         }
 
     try:
-        text = _call_single_tool(srv_name, srv_cfg, "dexter_search", {"query": query})
+        text = _call_single_tool(
+            srv_name, srv_cfg, "dexter_search", {"query": query, "network": network}
+        )
     except Exception as exc:  # surface any connection / tool error to the UI
         return {"ok": False, "error": str(exc), "results": []}
 
@@ -12223,7 +12227,7 @@ def x402_search(q: str = ""):
         results = data
     else:
         results = []
-    return {"ok": True, "query": query, "results": results}
+    return {"ok": True, "query": query, "network": network, "results": results}
 
 
 _FONT_DEFAULT_ID = "space-grotesk"
