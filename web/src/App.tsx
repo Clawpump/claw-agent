@@ -33,6 +33,7 @@ import {
   Globe,
   Heart,
   KeyRound,
+  Mail,
   Menu,
   MessageSquare,
   Package,
@@ -76,6 +77,7 @@ import type { SystemAction } from "@/contexts/system-actions-context";
 import ConfigPage from "@/pages/ConfigPage";
 import WalletPage from "@/pages/WalletPage";
 import X402Page from "@/pages/X402Page";
+import AgentMailPage from "@/pages/AgentMailPage";
 import DocsPage from "@/pages/DocsPage";
 import EnvPage from "@/pages/EnvPage";
 import FilesPage from "@/pages/FilesPage";
@@ -137,6 +139,7 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/": RootRedirect,
   "/wallet": WalletPage,
   "/x402": X402Page,
+  "/mail": AgentMailPage,
   "/sessions": SessionsPage,
   "/files": FilesPage,
   "/analytics": AnalyticsPage,
@@ -168,6 +171,7 @@ function ChatRouteSink() {
 const BUILTIN_NAV_REST: NavItem[] = [
   { path: "/wallet", label: "Wallet", icon: Wallet },
   { path: "/x402", label: "x402", icon: Zap },
+  { path: "/mail", label: "Mail", icon: Mail },
   {
     path: "/sessions",
     labelKey: "sessions",

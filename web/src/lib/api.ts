@@ -369,6 +369,86 @@ export interface X402SearchResponse {
   results: X402Result[];
 }
 
+// ── Agent Mail (AgentMail, via the ClawPump MCP) ───────────────────────
+export interface MailInbox {
+  id: string;
+  agentId: string;
+  provider: string;
+  inboxId: string;
+  emailAddress: string;
+  username: string;
+  domain: string;
+  webhookId: string | null;
+  verified: boolean;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MailMessage {
+  id: string;
+  agentId: string;
+  inboxId: string;
+  messageId: string;
+  threadId: string | null;
+  direction: "inbound" | "outbound";
+  fromAddress: string | null;
+  toAddresses: string[];
+  ccAddresses: string[];
+  subject: string | null;
+  textBody: string | null;
+  htmlBody: string | null;
+  preview: string | null;
+  read: boolean;
+  agentmailCreatedAt: string | null;
+  createdAt: string;
+}
+
+export interface MailAddressResponse {
+  ok: boolean;
+  error?: string;
+  has_inbox: boolean;
+  inbox: MailInbox | null;
+}
+
+export interface MailMessagesResponse {
+  ok: boolean;
+  error?: string;
+  messages: MailMessage[];
+}
+
+export interface MailMessageResponse {
+  ok: boolean;
+  error?: string;
+  message: MailMessage | null;
+}
+
+export interface MailCreateResponse {
+  ok: boolean;
+  error?: string;
+  inbox?: MailInbox | null;
+  alreadyExisted?: boolean;
+  note?: string | null;
+}
+
+export interface MailSendBody {
+  agent_id: string;
+  to: string[];
+  subject: string;
+  text?: string;
+  html?: string;
+  cc?: string[];
+  bcc?: string[];
+  reply_to?: string;
+  confirm: boolean;
+}
+
+export interface MailSendResponse {
+  ok: boolean;
+  error?: string;
+  result?: unknown;
+}
+
 export const api = {
   getStatus: () => fetchJSON<StatusResponse>("/api/status"),
   getWalletBalances: () =>
@@ -377,6 +457,36 @@ export const api = {
     fetchJSON<X402SearchResponse>(`/api/x402/search?q=${encodeURIComponent(q)}`),
   transferWallet: (body: WalletTransferInput) =>
     fetchJSON<WalletTransferResponse>("/api/wallet/transfer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  // ── Agent Mail (AgentMail) ─────────────────────────────────────────
+  // Every call carries an explicit agent_id — the MCP requires it once the
+  // account has more than one agent.
+  getMailAddress: (agentId: string) =>
+    fetchJSON<MailAddressResponse>(
+      `/api/mail/address?agent_id=${encodeURIComponent(agentId)}`,
+    ),
+  listMail: (opts: { agentId: string; direction?: "inbound" | "outbound"; limit?: number }) => {
+    const qs = new URLSearchParams({ agent_id: opts.agentId });
+    if (opts.direction) qs.set("direction", opts.direction);
+    if (opts.limit) qs.set("limit", String(opts.limit));
+    return fetchJSON<MailMessagesResponse>(`/api/mail/messages?${qs.toString()}`);
+  },
+  readMail: (messageId: string, agentId: string) =>
+    fetchJSON<MailMessageResponse>(
+      `/api/mail/message?message_id=${encodeURIComponent(messageId)}&agent_id=${encodeURIComponent(agentId)}`,
+    ),
+  createInbox: (body: { agent_id: string; username?: string; confirm: boolean }) =>
+    fetchJSON<MailCreateResponse>("/api/mail/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  sendMail: (body: MailSendBody) =>
+    fetchJSON<MailSendResponse>("/api/mail/send", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

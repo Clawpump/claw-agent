@@ -12081,36 +12081,91 @@ def _parse_mcp_json(text: str) -> Any:
     return data
 
 
+# ── Warm ClawPump MCP session (shared by the dashboard's MCP routes) ──────
+# Keep ONE MCP session alive and reuse it — the same thing the agent runtime
+# does, which is why chat kept working while the dashboard didn't. Opening a
+# fresh connection per request stalls the shared MCP event loop under OAuth
+# token churn and wedges every page until a restart. One warm session plus a
+# single reconnect-on-failure stays fast and self-heals. The lock serializes
+# calls (one JSON-RPC stream per session); the short timeout means a stall
+# fails fast instead of hanging forever.
+_warm_mcp_lock = threading.Lock()
+_warm_mcp_server: Any = None  # live MCPServerTask, kept warm by its keepalive ping
+
+
+class _McpToolError(RuntimeError):
+    """The tool ran but returned an error — the session itself is healthy."""
+
+
+def _clawpump_call(tool: str, arguments: Optional[dict] = None, *, timeout: float = 20) -> Any:
+    """Call a ClawPump MCP tool over the dashboard's warm, reused session.
+
+    Reuses one long-lived connection and reconnects only if the session has
+    died, so the dashboard behaves like the agent's persistent connection
+    instead of reconnecting (and stalling) per request. Returns parsed JSON;
+    raises ``RuntimeError`` when the MCP is unconfigured or the tool errors.
+    """
+    global _warm_mcp_server
+
+    name, cfg = _clawpump_mcp()
+    if not name:
+        raise RuntimeError("ClawPump MCP is not configured. Run `hermes clawpump setup`.")
+
+    from tools.mcp_tool import _ensure_mcp_loop, _run_on_mcp_loop, _connect_server
+    from hermes_cli.mcp_config import _resolve_mcp_server_config
+
+    cfg = _resolve_mcp_server_config(cfg)
+    _ensure_mcp_loop()
+
+    def _invoke(server: Any) -> Any:
+        async def _coro():
+            result = await server.session.call_tool(tool, arguments=arguments or {})
+            text = "".join(b.text for b in (result.content or []) if hasattr(b, "text"))
+            if getattr(result, "isError", False):
+                raise _McpToolError(text or "MCP tool returned an error")
+            return text
+
+        data = _parse_mcp_json(_run_on_mcp_loop(_coro, timeout=timeout))
+        if isinstance(data, dict) and isinstance(data.get("error"), str) and data["error"]:
+            raise _McpToolError(data["error"])
+        return data
+
+    with _warm_mcp_lock:
+        server = _warm_mcp_server
+        if server is not None:
+            try:
+                return _invoke(server)
+            except _McpToolError:
+                raise  # the session is fine — the tool itself returned an error
+            except Exception:
+                _warm_mcp_server = None  # transport died — drop it and reconnect
+                try:
+                    _run_on_mcp_loop(lambda: server.shutdown(), timeout=5)
+                except Exception:
+                    pass
+        server = _run_on_mcp_loop(lambda: _connect_server(name, cfg), timeout=timeout)
+        _warm_mcp_server = server
+        return _invoke(server)
+
+
 @app.get("/api/wallet/balances")
 def get_wallet_balances():
     """Agent wallet balances (name + address + SOL + USDC) via the ClawPump MCP.
 
     Calls ``get_wallet_summaries`` (and ``list_agents`` for display names) over
-    a short-lived MCP session (OAuth/API-key from ``hermes clawpump setup``).
-    Read-only. Sync def so FastAPI runs it in a threadpool — MCP call blocks.
+    the dashboard's warm MCP session. Read-only. Sync def — MCP call blocks.
     """
-    from hermes_cli.mcp_config import _call_single_tool
-
-    srv_name, srv_cfg = _clawpump_mcp()
-    if not srv_name:
-        return {
-            "ok": False,
-            "error": "ClawPump MCP is not configured. Run `hermes clawpump setup`.",
-            "wallets": [],
-        }
-
     try:
-        text = _call_single_tool(srv_name, srv_cfg, "get_wallet_summaries", {})
+        data = _clawpump_call("get_wallet_summaries", {})
     except Exception as exc:  # surface any connection / tool error to the UI
         return {"ok": False, "error": str(exc), "wallets": []}
 
-    data = _parse_mcp_json(text)
     wallets = data if isinstance(data, list) else []
 
     # Enrich with the agent's display name — the summaries only carry the
     # agent_id UUID. Best-effort: a failure here just leaves ``name`` unset.
     try:
-        agents = _parse_mcp_json(_call_single_tool(srv_name, srv_cfg, "list_agents", {}))
+        agents = _clawpump_call("list_agents", {})
         if isinstance(agents, dict):
             agents = agents.get("agents")
         names = {
@@ -12196,31 +12251,16 @@ def x402_search(q: str = "", network: str = "solana"):
     The ClawPump wallet settles x402 in USDC on Solana, so the default is
     ``solana``; pass ``network=all`` to see every chain. Sync def — MCP blocks.
     """
-    from hermes_cli.mcp_config import _call_single_tool
-
     query = (q or "").strip()
     if not query:
         return {"ok": True, "query": "", "network": network, "results": []}
 
-    srv_name, srv_cfg = _clawpump_mcp()
-    if not srv_name:
-        return {
-            "ok": False,
-            "error": "ClawPump MCP is not configured. Run `hermes clawpump setup`.",
-            "results": [],
-        }
-
     try:
-        text = _call_single_tool(
-            srv_name, srv_cfg, "dexter_search", {"query": query, "network": network}
-        )
+        data = _clawpump_call("dexter_search", {"query": query, "network": network})
     except Exception as exc:  # surface any connection / tool error to the UI
         return {"ok": False, "error": str(exc), "results": []}
 
-    data = _parse_mcp_json(text)
     if isinstance(data, dict):
-        if isinstance(data.get("error"), str) and data["error"]:
-            return {"ok": False, "error": data["error"], "results": []}
         results = data.get("results")
         results = results if isinstance(results, list) else []
     elif isinstance(data, list):
@@ -12228,6 +12268,153 @@ def x402_search(q: str = "", network: str = "solana"):
     else:
         results = []
     return {"ok": True, "query": query, "network": network, "results": results}
+
+
+# ---------------------------------------------------------------------------
+# Agent Mail (AgentMail) — agent email inbox via the ClawPump MCP
+# ---------------------------------------------------------------------------
+# Thin proxies over the ``agent_mail_*`` MCP tools, mirroring the x402 route
+# above. The two spending/outward actions (provision an inbox, send an email)
+# require an explicit ``confirm`` from the UI — the dashboard never auto-spends.
+
+
+def _agent_args(agent_id: Optional[str]) -> Dict[str, Any]:
+    """Base args for a ClawPump MCP call. Omit ``agent_id`` entirely when the
+    dashboard hasn't picked one so the MCP resolves the default/only agent."""
+    aid = (agent_id or "").strip()
+    return {"agent_id": aid} if aid else {}
+
+
+def _clawpump_call_once(tool: str, arguments: Optional[dict] = None, *, timeout: float = 30) -> Any:
+    """Call a ClawPump MCP tool over a fresh, one-shot connection.
+
+    For rare, irreversible actions (wallet transfers, email sends, paid inbox
+    provisioning): a fresh connect means current auth and — crucially — exactly
+    one attempt, so a dropped response is never silently re-sent. Frequent reads
+    use the warm ``_clawpump_call`` instead.
+    """
+    from hermes_cli.mcp_config import _call_single_tool
+
+    name, cfg = _clawpump_mcp()
+    if not name:
+        raise RuntimeError("ClawPump MCP is not configured. Run `hermes clawpump setup`.")
+    data = _parse_mcp_json(_call_single_tool(name, cfg, tool, arguments or {}, connect_timeout=timeout))
+    if isinstance(data, dict) and isinstance(data.get("error"), str) and data["error"]:
+        raise RuntimeError(data["error"])
+    return data
+
+
+class MailCreateBody(BaseModel):
+    agent_id: Optional[str] = None
+    username: Optional[str] = None
+    confirm: bool = False
+
+
+class MailSendBody(BaseModel):
+    agent_id: Optional[str] = None
+    to: Any = None  # str | list[str] — the MCP tool accepts either
+    subject: str
+    text: Optional[str] = None
+    html: Optional[str] = None
+    cc: Optional[List[str]] = None
+    bcc: Optional[List[str]] = None
+    reply_to: Optional[str] = None
+    confirm: bool = False
+
+
+@app.get("/api/mail/address")
+def mail_address(agent_id: str = ""):
+    """The agent's email address + inbox status via ``agent_mail_get_address``."""
+    try:
+        data = _clawpump_call("agent_mail_get_address", _agent_args(agent_id))
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "has_inbox": False, "inbox": None}
+    inbox = data.get("inbox") if isinstance(data, dict) else None
+    return {"ok": True, "has_inbox": bool(inbox), "inbox": inbox}
+
+
+@app.get("/api/mail/messages")
+def mail_messages(agent_id: str = "", direction: str = "", limit: int = 50):
+    """List the agent's emails (synced inbound + sent) via ``agent_mail_list``."""
+    args = _agent_args(agent_id)
+    if direction in ("inbound", "outbound"):
+        args["direction"] = direction
+    args["limit"] = max(1, min(int(limit or 50), 200))
+    try:
+        data = _clawpump_call("agent_mail_list", args)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "messages": []}
+    messages = data.get("messages") if isinstance(data, dict) else None
+    return {"ok": True, "messages": messages if isinstance(messages, list) else []}
+
+
+@app.get("/api/mail/message")
+def mail_message(message_id: str, agent_id: str = ""):
+    """Read one email (full body) via ``agent_mail_read``."""
+    args = _agent_args(agent_id)
+    args["message_id"] = message_id
+    try:
+        data = _clawpump_call("agent_mail_read", args)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "message": None}
+    message = data.get("message") if isinstance(data, dict) else None
+    return {"ok": True, "message": message}
+
+
+@app.post("/api/mail/create")
+def mail_create(body: MailCreateBody):
+    """Provision the agent's inbox (~$2 USDC) via ``agent_mail_create``."""
+    if not body.confirm:
+        return {
+            "ok": False,
+            "error": "Provisioning an inbox costs ~$2 USDC from the agent wallet — confirm to proceed.",
+        }
+    args = _agent_args(body.agent_id)
+    args["confirm_provision"] = True
+    if body.username and body.username.strip():
+        args["username"] = body.username.strip()
+    try:
+        data = _clawpump_call_once("agent_mail_create", args)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    if not isinstance(data, dict):
+        data = {}
+    return {
+        "ok": True,
+        "inbox": data.get("inbox"),
+        "alreadyExisted": bool(data.get("alreadyExisted")),
+        "note": data.get("note"),
+    }
+
+
+@app.post("/api/mail/send")
+def mail_send(body: MailSendBody):
+    """Send an email from the agent's inbox via ``agent_mail_send`` (x402)."""
+    if not body.confirm:
+        return {"ok": False, "error": "Sending email is outward-facing — confirm to proceed."}
+    if not (body.text and body.text.strip()) and not (body.html and body.html.strip()):
+        return {"ok": False, "error": "Provide a message body."}
+    if not body.to:
+        return {"ok": False, "error": "At least one recipient is required."}
+    args = _agent_args(body.agent_id)
+    args["confirm_send"] = True
+    args["to"] = body.to
+    args["subject"] = body.subject
+    if body.text:
+        args["text"] = body.text
+    if body.html:
+        args["html"] = body.html
+    if body.cc:
+        args["cc"] = body.cc
+    if body.bcc:
+        args["bcc"] = body.bcc
+    if body.reply_to and body.reply_to.strip():
+        args["reply_to"] = body.reply_to.strip()
+    try:
+        data = _clawpump_call_once("agent_mail_send", args)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "result": data}
 
 
 _FONT_DEFAULT_ID = "space-grotesk"
