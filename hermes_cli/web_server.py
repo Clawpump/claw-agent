@@ -12168,14 +12168,18 @@ def get_wallet_balances():
         agents = _clawpump_call("list_agents", {})
         if isinstance(agents, dict):
             agents = agents.get("agents")
-        names = {
-            a["id"]: a.get("name")
+        by_id = {
+            a["id"]: a
             for a in (agents or [])
             if isinstance(a, dict) and a.get("id")
         }
         for w in wallets:
             if isinstance(w, dict):
-                w["name"] = names.get(w.get("agent_id"))
+                meta = by_id.get(w.get("agent_id")) or {}
+                w["name"] = meta.get("name")
+                w["token_mint"] = meta.get("token_mint")
+                # avatar_url is fetched lazily via /api/agent/avatar — list_agents
+                # nulls it; only the single get_agent returns it.
     except Exception:
         pass
 

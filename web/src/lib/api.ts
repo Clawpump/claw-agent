@@ -313,6 +313,8 @@ function appendProfileParam(url: string, profile?: string): string {
 export interface AgentWalletBalance {
   agent_id: string;
   name?: string | null;
+  avatar_url?: string | null;
+  token_mint?: string | null;
   wallet_address: string | null;
   sol_balance: number | null;
   usdc_balance: number | null;

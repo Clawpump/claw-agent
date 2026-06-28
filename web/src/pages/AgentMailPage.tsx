@@ -210,6 +210,10 @@ export default function AgentMailPage() {
   );
 
   const recipients = useMemo(() => parseRecipients(to), [to]);
+  const selectedWallet = useMemo(
+    () => agents.find((a) => a.agent_id === agentId) ?? null,
+    [agents, agentId],
+  );
 
   const startCompose = useCallback(() => {
     setSendError(null);
@@ -371,6 +375,26 @@ export default function AgentMailPage() {
               <span className="font-semibold text-foreground">~$2 USDC</span> payment from the
               agent&apos;s own wallet over x402.
             </p>
+            {selectedWallet && (
+              <div className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
+                <span className="text-sm text-muted-foreground">This agent&apos;s USDC balance</span>
+                <span
+                  className={`font-mono text-sm font-semibold ${
+                    (selectedWallet.usdc_balance ?? 0) >= 2 ? "text-emerald-300" : "text-amber-300"
+                  }`}
+                >
+                  {selectedWallet.usdc_balance != null
+                    ? `$${selectedWallet.usdc_balance.toFixed(2)}`
+                    : "—"}
+                </span>
+              </div>
+            )}
+            {selectedWallet && (selectedWallet.usdc_balance ?? 0) < 2 && (
+              <p className="text-xs text-amber-300">
+                Not enough USDC for the ~$2 fee — add USDC to this agent&apos;s wallet (or swap
+                SOL&nbsp;→&nbsp;USDC) before creating the inbox.
+              </p>
+            )}
             <div className="flex flex-col gap-2 sm:flex-row">
               <input
                 value={username}

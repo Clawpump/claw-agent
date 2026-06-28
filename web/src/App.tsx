@@ -526,10 +526,9 @@ export default function App() {
         </Button>
 
         <img
-          src="/claw-logo.webp"
+          src="/claw-logo.png"
           alt=""
           className="h-7 w-7 shrink-0"
-          style={{ mixBlendMode: "screen" }}
         />
         <Typography
           className="font-bold text-[0.95rem] leading-[0.95] tracking-[0.05em] text-midground"
@@ -591,10 +590,9 @@ export default function App() {
                 <PluginSlot name="header-left" />
 
                 <img
-                  src="/claw-logo.webp"
+                  src="/claw-logo.png"
                   alt="Claw Agent"
                   className="h-8 w-8 shrink-0"
-                  style={{ mixBlendMode: "screen" }}
                 />
                 <Typography
                   className="font-bold text-[1.125rem] leading-[0.95] tracking-[0.0525rem] text-midground uppercase"

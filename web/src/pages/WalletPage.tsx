@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Check, Copy, RefreshCw, Send, Wallet, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Check, Coins, Copy, RefreshCw, Send, Wallet, X } from "lucide-react";
 import { api } from "@/lib/api";
 import type { AgentWalletBalance } from "@/lib/api";
 import { Button } from "@nous-research/ui/ui/components/button";
+import { Badge } from "@nous-research/ui/ui/components/badge";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import {
   Card,
@@ -10,6 +12,23 @@ import {
   CardHeader,
   CardTitle,
 } from "@nous-research/ui/ui/components/card";
+
+function AgentAvatar({ url }: { url?: string | null }) {
+  // ``url`` is a signed avatar URL when the agent has one, else null → fall
+  // back to the ClawPump claw so every card shows a real logo.
+  return (
+    <img
+      src={url || "/claw-logo.png"}
+      alt=""
+      className="h-7 w-7 shrink-0 rounded-full border border-border bg-background object-cover"
+    />
+  );
+}
+
+function tokenizePrompt(w: AgentWalletBalance): string {
+  const name = w.name || w.agent_id;
+  return `Launch a ClawPump token for my agent "${name}" (agent_id ${w.agent_id}). Ask me for the ticker/symbol and any details you need, then launch it.`;
+}
 
 /* ── Token logos (inline SVG, no network) ─────────────────────────────── */
 
@@ -277,6 +296,7 @@ export default function WalletPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [transfer, setTransfer] = useState<AgentWalletBalance | null>(null);
+  const navigate = useNavigate();
 
   const load = useCallback(() => {
     setLoading(true);
@@ -296,6 +316,7 @@ export default function WalletPage() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
   }, [load]);
 
@@ -334,13 +355,27 @@ export default function WalletPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           {wallets.map((w) => (
             <Card key={w.agent_id}>
               <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-                <CardTitle className="truncate text-sm font-semibold">
-                  {w.name || shortAddress(w.agent_id)}
-                </CardTitle>
+                <div className="flex min-w-0 items-center gap-2">
+                  <AgentAvatar url={w.avatar_url} />
+                  <CardTitle className="truncate text-sm font-semibold">
+                    {w.name || shortAddress(w.agent_id)}
+                  </CardTitle>
+                  {w.token_mint && (
+                    <a
+                      href={`https://solscan.io/token/${w.token_mint}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={w.token_mint}
+                      className="shrink-0"
+                    >
+                      <Badge tone="success">tokenized</Badge>
+                    </a>
+                  )}
+                </div>
                 {w.wallet_address && (
                   <Button
                     outlined
@@ -383,6 +418,19 @@ export default function WalletPage() {
                     </div>
                   </div>
                 </div>
+                {!w.token_mint && (
+                  <Button
+                    outlined
+                    size="sm"
+                    className="w-full"
+                    onClick={() =>
+                      navigate(`/chat?prompt=${encodeURIComponent(tokenizePrompt(w))}`)
+                    }
+                    prefix={<Coins className="h-4 w-4" />}
+                  >
+                    Tokenize this agent
+                  </Button>
+                )}
               </CardContent>
             </Card>
           ))}
