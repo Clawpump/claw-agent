@@ -189,7 +189,7 @@
       "extendInfo": {
         "CFBundleDisplayName": "Claw Agent",
         "CFBundleExecutable": "Hermes",
-        "CFBundleName": "Claw Agent",
+        "CFBundleName": "Hermes",
         "NSAudioCaptureUsageDescription": "Claw Agent uses audio capture for voice conversations.",
         "NSMicrophoneUsageDescription": "Claw Agent uses the microphone for voice input and voice conversations."
       },
