@@ -121,18 +121,31 @@ export default function PodSetupDialog({
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <Zap className="h-4 w-4 text-primary" />
-          <h2 className="text-sm font-semibold">{heading}</h2>
+          <h2 className="text-sm font-semibold">
+            {done?.fundingError ? "Pod created — funding failed" : heading}
+          </h2>
         </div>
 
         {done ? (
           <div className="flex flex-col gap-3 p-4">
-            <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-3 text-sm">
-              <div className="font-semibold text-emerald-300">⚡ Using Pod</div>
-              <div className="mt-0.5 text-muted-foreground">
-                Funded <span className="font-mono">${done.amount.toFixed(2)} USDC</span> · model{" "}
-                <span className="font-mono">{done.model}</span>. New chats run on Pod automatically.
+            {done.fundingError ? (
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-3 text-sm">
+                <div className="font-semibold text-amber-300">⚠ Pod created but not funded</div>
+                <div className="mt-0.5 text-muted-foreground">
+                  The on-chain deposit didn’t confirm ({done.fundingError}). The pod (
+                  <span className="font-mono">{done.model}</span>) is selected but has no balance — it
+                  may settle shortly, or run Set up Pod again to top it up.
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-3 text-sm">
+                <div className="font-semibold text-emerald-300">⚡ Using Pod</div>
+                <div className="mt-0.5 text-muted-foreground">
+                  Funded <span className="font-mono">${done.amount.toFixed(2)} USDC</span> · model{" "}
+                  <span className="font-mono">{done.model}</span>. New chats run on Pod automatically.
+                </div>
+              </div>
+            )}
             {done.signature && (
               <a
                 className="text-xs text-primary hover:underline"
@@ -142,12 +155,6 @@ export default function PodSetupDialog({
               >
                 View funding transaction ↗
               </a>
-            )}
-            {done.fundingError && (
-              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-                Pod was created but the deposit didn’t confirm ({done.fundingError}). It may settle
-                shortly, or run Set up Pod again to top it up.
-              </div>
             )}
             <div className="flex justify-end">
               <Button onClick={() => onProvisioned(done.model)}>Done</Button>
@@ -221,7 +228,7 @@ export default function PodSetupDialog({
                     <Spinner className="text-xs" /> Funding Pod…
                   </span>
                 ) : (
-                  `Fund $${Number.isFinite(amountNum) ? amountNum.toFixed(0) : "0"} & use Pod`
+                  `Fund $${Number.isFinite(amountNum) ? amountNum.toFixed(2) : "0.00"} & use Pod`
                 )}
               </Button>
             </div>
