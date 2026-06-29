@@ -731,4 +731,33 @@ def resolve_provider_full(
     except Exception:
         pass
 
+    # 4. Plugin model providers (providers/ registry, e.g. usepod). Not in
+    #    models.dev or the built-in alias table, so synthesize a ProviderDef
+    #    from the plugin's ProviderProfile. Without this the live model-switch
+    #    path ("Unknown provider 'usepod'") rejects any plugin api-key provider
+    #    even though it's fully configured and serving models.
+    try:
+        from providers import get_provider_profile
+
+        prof = get_provider_profile(canonical) or get_provider_profile(raw)
+        if prof is not None:
+            env_vars = tuple(getattr(prof, "env_vars", ()) or ())
+            # First env var is the API key; a trailing *_BASE_URL is the
+            # optional custom-endpoint override.
+            key_envs = tuple(e for e in env_vars if not e.upper().endswith("_BASE_URL")) or env_vars[:1]
+            base_env = next((e for e in env_vars if e.upper().endswith("_BASE_URL")), "")
+            transport = "anthropic_messages" if getattr(prof, "api_mode", "") == "anthropic_messages" else "openai_chat"
+            return ProviderDef(
+                id=canonical,
+                name=getattr(prof, "display_name", "") or getattr(prof, "name", canonical),
+                transport=transport,
+                api_key_env_vars=key_envs,
+                base_url=getattr(prof, "base_url", "") or "",
+                base_url_env_var=base_env,
+                auth_type=getattr(prof, "auth_type", "api_key") or "api_key",
+                source="plugin",
+            )
+    except Exception:
+        pass
+
     return None
