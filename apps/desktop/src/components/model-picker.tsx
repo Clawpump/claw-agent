@@ -11,6 +11,7 @@ import { cn } from '../lib/utils'
 import { startManualOnboarding } from '../store/onboarding'
 
 import { InlineNotice } from './notifications'
+import { PodSetupDialog } from './pod-setup-dialog'
 import { Button } from './ui/button'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog'
@@ -96,6 +97,12 @@ export function ModelPickerDialog({
     onOpenChange(false)
   }
 
+  // ClawPump: "Pod" — fund a private inference Pod from an agent wallet and use
+  // it as the provider. One dialog, one confirm (the on-chain spend). On
+  // success the backend has already set provider=usepod; re-select so the
+  // session adopts it (model-applied + reload prompt) like any model switch.
+  const [podOpen, setPodOpen] = useState(false)
+
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className={cn('max-h-[85vh] max-w-2xl gap-0 overflow-hidden p-0', contentClassName)}>
@@ -129,6 +136,9 @@ export function ModelPickerDialog({
         </Command>
 
         <DialogFooter className="flex-row items-center justify-end gap-2 bg-card p-3">
+          <Button className="mr-auto" onClick={() => setPodOpen(true)} variant="ghost">
+            ⚡ Set up Pod
+          </Button>
           <Button onClick={addProvider} variant="ghost">
             {copy.addProvider}
           </Button>
@@ -137,6 +147,15 @@ export function ModelPickerDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      <PodSetupDialog
+        onOpenChange={setPodOpen}
+        onProvisioned={model => {
+          onSelect({ provider: 'usepod', model })
+          onOpenChange(false)
+        }}
+        open={podOpen}
+      />
     </Dialog>
   )
 }

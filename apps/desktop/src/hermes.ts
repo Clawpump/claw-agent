@@ -700,6 +700,45 @@ export function setGlobalModel(
   })
 }
 
+export interface PodWallet {
+  agent_id: string
+  name?: string | null
+  wallet_address: string | null
+  usdc_balance: number | null
+  sol_balance?: number | null
+}
+
+/** ClawPump agent wallets (id + name + USDC balance) for the Pod funding picker. */
+export function getPodWallets(): Promise<{ ok: boolean; wallets: PodWallet[]; error?: string }> {
+  return window.hermesDesktop.api<{ ok: boolean; wallets: PodWallet[]; error?: string }>({
+    ...profileScoped(),
+    path: '/api/wallet/balances'
+  })
+}
+
+/**
+ * Provision a UsePod "Pod" funded from the chosen ClawPump agent wallet and
+ * switch the session onto it as the provider. Spends real on-chain USDC — the
+ * caller must confirm the amount first.
+ */
+export function provisionPod(
+  agentId: string,
+  amount: number
+): Promise<{ ok: boolean; model?: string; signature?: string; funding_error?: string; error?: string }> {
+  return window.hermesDesktop.api<{
+    ok: boolean
+    model?: string
+    signature?: string
+    funding_error?: string
+    error?: string
+  }>({
+    ...profileScoped(),
+    path: '/api/clawpump/pod/provision',
+    method: 'POST',
+    body: { agent_id: agentId, amount }
+  })
+}
+
 export function getAuxiliaryModels(): Promise<AuxiliaryModelsResponse> {
   return window.hermesDesktop.api<AuxiliaryModelsResponse>({
     ...profileScoped(),

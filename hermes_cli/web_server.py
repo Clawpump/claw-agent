@@ -12186,6 +12186,106 @@ def get_wallet_balances():
     return {"ok": True, "wallets": wallets}
 
 
+class PodProvisionBody(BaseModel):
+    agent_id: str
+    amount: float
+
+
+@app.post("/api/clawpump/pod/provision")
+async def post_pod_provision(body: PodProvisionBody, profile: Optional[str] = None):
+    """Provision a UsePod "Pod" and switch the agent onto it as the provider.
+
+    One ClawPump-wallet-funded call: ``usepod_provision`` registers a fresh pod
+    and funds it with ``amount`` USDC from ``agent_id``'s wallet (double-gated by
+    ``confirm_deposit``), returning an ``api_token``. We persist the token
+    (USEPOD_API_KEY) and set ``model.provider=usepod`` so the session uses Pod —
+    the desktop's one-click "Set up Pod" flow, mirroring the CLI Pod picker.
+
+    Spends real on-chain USDC; the UI confirms the amount before calling this.
+    Sync body runs in a worker thread (MCP + ``_profile_scope`` both block).
+    """
+    agent_id = (body.agent_id or "").strip()
+    try:
+        amount = float(body.amount)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="amount must be a number")
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="agent_id is required")
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="amount must be positive")
+
+    def _unwrap(value: "Any") -> "Any":
+        # ClawPump MCP results can arrive double-wrapped: {"result": "<escaped
+        # json>"} or {"structuredContent": {...}}. Peel those so we see the real
+        # {api_token, deposit_code, signature, funding_error} object.
+        seen = 0
+        while isinstance(value, str) and seen < 3:
+            try:
+                value = json.loads(value)
+                seen += 1
+            except Exception:
+                break
+        if isinstance(value, dict):
+            sc = value.get("structuredContent")
+            if isinstance(sc, dict):
+                return sc
+            if set(value.keys()) <= {"result"} and value.get("result") is not None:
+                return _unwrap(value["result"])
+        return value
+
+    def _provision_and_apply():
+        from hermes_cli import distribution as _dist
+
+        raw = _clawpump_call(
+            "usepod_provision",
+            {"amount": amount, "agent_id": agent_id, "confirm_deposit": True},
+            timeout=120,
+        )
+        # Token extraction goes through the battle-tested downstream helper
+        # (tolerates nesting/escaping); signature is best-effort from _unwrap.
+        tok = _dist.usepod_provision_token("mcp_clawpump_usepod_provision", raw)
+        data = _unwrap(raw)
+        data = data if isinstance(data, dict) else {}
+        if tok:
+            api_token, deposit_code = tok
+        else:
+            api_token = str(data.get("api_token") or data.get("token") or "").strip()
+            deposit_code = str(data.get("deposit_code") or "").strip()
+        if not api_token:
+            detail = str(data.get("funding_error") or data.get("error") or "no api_token returned")
+            raise RuntimeError(f"Pod provisioning failed: {detail}")
+
+        _dist.persist_usepod_credentials(api_token, deposit_code)
+
+        current = ""
+        try:
+            from hermes_cli.config import load_config
+
+            current = str((load_config().get("model") or {}).get("default") or "")
+        except Exception:
+            current = ""
+        model, _provider, _base_url = _dist.usepod_pod_switch_target(api_token, current)
+        with _profile_scope(body.profile if hasattr(body, "profile") else profile):
+            _apply_model_assignment_sync("main", "usepod", model, "", "", "")
+
+        return {
+            "ok": True,
+            "provider": "usepod",
+            "model": model,
+            "amount": amount,
+            "signature": str(data.get("signature") or ""),
+            "funding_error": str(data.get("funding_error") or ""),
+        }
+
+    try:
+        return await asyncio.to_thread(_provision_and_apply)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _log.exception("POST /api/clawpump/pod/provision failed")
+        return {"ok": False, "error": str(exc)}
+
+
 class WalletTransferBody(BaseModel):
     agent_id: str
     to: str
