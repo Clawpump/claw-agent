@@ -129,6 +129,7 @@ export function ModelPickerDialog({
               error={error}
               loading={loading}
               onSelectModel={selectModel}
+              onSetUpPod={() => setPodOpen(true)}
               providers={providers}
               search={search}
             />
@@ -136,9 +137,6 @@ export function ModelPickerDialog({
         </Command>
 
         <DialogFooter className="flex-row items-center justify-end gap-2 bg-card p-3">
-          <Button className="mr-auto" onClick={() => setPodOpen(true)} variant="ghost">
-            ⚡ Set up Pod
-          </Button>
           <Button onClick={addProvider} variant="ghost">
             {copy.addProvider}
           </Button>
@@ -167,6 +165,7 @@ function ModelResults({
   currentModel,
   currentProvider,
   onSelectModel,
+  onSetUpPod,
   search
 }: {
   loading: boolean
@@ -175,6 +174,7 @@ function ModelResults({
   currentModel: string
   currentProvider: string
   onSelectModel: (provider: ModelOptionProvider, model: string) => void
+  onSetUpPod: () => void
   search: string
 }) {
   const { t } = useI18n()
@@ -194,11 +194,39 @@ function ModelResults({
     )
   }
 
-  if (providers.length === 0) {
-    return <div className="px-4 py-6 text-sm text-muted-foreground">{copy.noAuthenticatedProviders}</div>
-  }
-
   const q = search.trim().toLowerCase()
+
+  // ClawPump: promote "Pod" at the top (mirrors the CLI's promoted Pod entry).
+  // Selecting it opens the one-confirm setup dialog (fund from a wallet) rather
+  // than switching models directly — Pod has no model until it's provisioned.
+  const podVisible = !q || 'pod usepod pay-as-you-go wallet clawpump'.includes(q)
+  const podRow = podVisible ? (
+    <CommandGroup heading="ClawPump" key="clawpump-pod">
+      <CommandItem
+        className="flex items-center gap-2 data-[selected=true]:bg-primary/15"
+        onSelect={onSetUpPod}
+        value="usepod pod pay-as-you-go clawpump wallet"
+      >
+        <span className="text-base leading-none">⚡</span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="font-medium">Pod</span>
+          <span className="truncate text-xs text-muted-foreground">
+            Pay-as-you-go inference — fund from your ClawPump wallet
+          </span>
+        </span>
+        <span className="shrink-0 text-[0.62rem] uppercase tracking-wide text-primary">Set up</span>
+      </CommandItem>
+    </CommandGroup>
+  ) : null
+
+  if (providers.length === 0) {
+    return (
+      <>
+        {podRow}
+        <div className="px-4 py-6 text-sm text-muted-foreground">{copy.noAuthenticatedProviders}</div>
+      </>
+    )
+  }
 
   const matches = (provider: ModelOptionProvider, model: string) =>
     !q ||
@@ -213,6 +241,7 @@ function ModelResults({
 
   return (
     <>
+      {podRow}
       {configured.map(provider => {
         // Preserve the backend's curated order — filter in place, no re-sort.
         const models = (provider.models ?? []).filter(m => matches(provider, m))
