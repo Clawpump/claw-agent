@@ -2029,8 +2029,8 @@ async function applyUpdatesPosixInApp() {
   }
 
   const rebuiltApp = [
-    path.join(updateRoot, 'apps', 'desktop', 'release', 'mac-arm64', 'Hermes.app'),
-    path.join(updateRoot, 'apps', 'desktop', 'release', 'mac', 'Hermes.app')
+    path.join(updateRoot, 'apps', 'desktop', 'release', 'mac-arm64', 'Claw Agent.app'),
+    path.join(updateRoot, 'apps', 'desktop', 'release', 'mac', 'Claw Agent.app')
   ].find(directoryExists)
   const targetApp = runningAppBundle()
 

@@ -70,21 +70,21 @@ def _agent_root(hermes_home: Path) -> Path:
 def desktop_userdata_dir() -> Path:
     """Return the Electron ``userData`` directory for the desktop app.
 
-    Mirrors Electron's ``app.getPath('userData')`` for an app named "Hermes"
+    Mirrors Electron's ``app.getPath('userData')`` for an app named "Claw Agent"
     on each platform. This is GUI-only state (connection.json, updates.json,
     Chromium cache) and never holds agent config or sessions.
     """
     home = Path.home()
     if sys.platform == "darwin":
-        return home / "Library" / "Application Support" / "Hermes"
+        return home / "Library" / "Application Support" / "Claw Agent"
     if sys.platform == "win32":
         appdata = os.environ.get("APPDATA")
         base = Path(appdata) if appdata else (home / "AppData" / "Roaming")
-        return base / "Hermes"
+        return base / "Claw Agent"
     # Linux / other POSIX — XDG config home.
     xdg = os.environ.get("XDG_CONFIG_HOME")
     base = Path(xdg) if xdg else (home / ".config")
-    return base / "Hermes"
+    return base / "Claw Agent"
 
 
 def source_built_gui_artifacts(hermes_home: Path) -> "list[Path]":
@@ -119,6 +119,9 @@ def packaged_gui_app_paths() -> "list[Path]":
     paths: list[Path] = []
     if sys.platform == "darwin":
         paths += [
+            Path("/Applications/Claw Agent.app"),
+            home / "Applications" / "Claw Agent.app",
+            # Legacy bundle name (older local builds) — clean up if present.
             Path("/Applications/Hermes.app"),
             home / "Applications" / "Hermes.app",
         ]
@@ -126,14 +129,16 @@ def packaged_gui_app_paths() -> "list[Path]":
         local = os.environ.get("LOCALAPPDATA")
         local_base = Path(local) if local else (home / "AppData" / "Local")
         paths += [
-            # NSIS per-user install (perMachine=false → Programs\Hermes).
-            local_base / "Programs" / "Hermes",
+            # NSIS per-user install (perMachine=false → Programs\Claw Agent).
+            local_base / "Programs" / "Claw Agent",
+            local_base / "Programs" / "Hermes",  # legacy
             # Older / alternate layout some builds used.
             local_base / "hermes-desktop",
         ]
         program_files = os.environ.get("ProgramFiles")
         if program_files:
             # NSIS per-machine fallback (needs admin to remove).
+            paths.append(Path(program_files) / "Claw Agent")
             paths.append(Path(program_files) / "Hermes")
     else:
         # Linux: AppImage is a single file the user placed somewhere; we can

@@ -5003,19 +5003,24 @@ def _desktop_packaged_executable(desktop_dir: Path) -> Optional[Path]:
     """Return the current platform's unpacked Electron app executable."""
     release_dir = desktop_dir / "release"
     if sys.platform == "darwin":
-        candidates = list(release_dir.glob("mac*/Hermes.app/Contents/MacOS/Hermes"))
+        # Renamed bundle "Claw Agent.app" (binary MacOS/Claw Agent); keep the
+        # legacy "Hermes.app" as a fallback for older local builds.
+        candidates = list(release_dir.glob("mac*/Claw Agent.app/Contents/MacOS/Claw Agent"))
+        candidates += list(release_dir.glob("mac*/Hermes.app/Contents/MacOS/Hermes"))
     elif sys.platform == "win32":
         candidates = [
+            release_dir / "win-unpacked" / "Claw Agent.exe",
+            release_dir / "win-ia32-unpacked" / "Claw Agent.exe",
+            release_dir / "win-arm64-unpacked" / "Claw Agent.exe",
             release_dir / "win-unpacked" / "Hermes.exe",
-            release_dir / "win-ia32-unpacked" / "Hermes.exe",
-            release_dir / "win-arm64-unpacked" / "Hermes.exe",
         ]
     else:
         candidates = [
+            release_dir / "linux-unpacked" / "claw-agent",
             release_dir / "linux-unpacked" / "hermes",
             release_dir / "linux-unpacked" / "Hermes",
+            release_dir / "linux-arm64-unpacked" / "claw-agent",
             release_dir / "linux-arm64-unpacked" / "hermes",
-            release_dir / "linux-arm64-unpacked" / "Hermes",
         ]
 
     existing = [p for p in candidates if p.exists()]
