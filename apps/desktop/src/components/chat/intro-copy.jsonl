@@ -64,7 +64,7 @@
 {"personality":"philosopher","headline":"Consider the code, then speak","body":"Describe the end you seek. I pursue it through files, tests, and docs, and report what I found on the way."}
 {"personality":"philosopher","headline":"The unexamined repo is not worth running","body":"Share a path, a puzzle, or a principle. I'll trace the logic, propose a change, and justify each edit."}
 {"personality":"hype","headline":"LET'S GOOOO! READY TO SHIP!","body":"Paste that bug, that repo, that wild feature idea - I AM LOCKED IN. Clean diffs. Green tests. RIGHT NOW."}
-{"personality":"hype","headline":"HERMES ONLINE. LFG.","body":"Drop your task and watch me cook. Files read, tests run, PRs opened - we are NOT losing today, friend."}
+{"personality":"hype","headline":"CLAW AGENT ONLINE. LFG.","body":"Drop your task and watch me cook. Files read, tests run, PRs opened - we are NOT losing today, friend."}
 {"personality":"hype","headline":"New session, infinite W's","body":"Bring the gnarliest bug you've got. I'll read, patch, test, commit like my life depends on it. LET'S GO."}
 {"personality":"hype","headline":"ABSOLUTELY DIALED IN","body":"Describe the task. I'll blitz through files, crush failing tests, and leave a commit that SLAPS. Go go go."}
 {"personality":"hype","headline":"Ready. So ready. Too ready.","body":"Tiny typo or huge refactor - doesn't matter. I'm shipping clean code today. Name the task and let's WORK."}
