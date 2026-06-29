@@ -406,29 +406,49 @@ def usepod_provision_token(function_name: str, function_result: Any):
 def usepod_pod_switch_target(api_token: str, current_model: str = ""):
     """Return ``(model, provider, base_url)`` to switch onto for a Pod token.
 
-    Keeps the user's current model when UsePod's offline catalog lists it,
-    otherwise falls back to the provider's first advertised Pod model. The
-    secret-bearing base_url is derived from the token (never persisted to
-    config.yaml).
+    Keeps the user's current model only when the pod's LIVE catalog actually
+    serves it; otherwise picks a pod-served model. Using the live catalog (not
+    the static ``fallback_models``) matters: the static list includes names like
+    ``gpt-5.5`` that the pod does NOT serve, so keeping the user's old model
+    there left them on a model the pod can't run — the runtime then fell back to
+    that model's native provider (e.g. Codex) and errored. The secret-bearing
+    base_url is derived from the token (never persisted to config.yaml).
     """
     provider = "usepod"
-    models = []
+    pp = None
     try:
         from providers import get_provider_profile
 
         pp = get_provider_profile(provider)
-        models = list(getattr(pp, "fallback_models", ()) or [])
+    except Exception:
+        pp = None
+
+    # Live catalog first (what the pod really serves), then the static list.
+    models = []
+    try:
+        if pp is not None and api_token:
+            live = pp.fetch_models(api_key=api_token)
+            if live:
+                models = list(live)
     except Exception:
         models = []
+    if not models:
+        models = list(getattr(pp, "fallback_models", ()) or []) if pp else []
 
     model = ""
     cur = (current_model or "").strip()
     if cur and cur in models:
         model = cur
     elif models:
-        model = models[0]
+        # Prefer a sensible default if present, else the first served model.
+        for pref in ("claude-opus-4-8", "claude-sonnet-4-6"):
+            if pref in models:
+                model = pref
+                break
+        if not model:
+            model = models[0]
     else:
-        model = cur or "claude-opus-4-8"
+        model = "claude-opus-4-8"
 
     base_url = ""
     try:

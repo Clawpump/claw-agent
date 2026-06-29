@@ -39,13 +39,19 @@ USEPOD_API_BASE = "https://api.usepod.ai"
 class UsePodProfile(ProviderProfile):
     """UsePod — OpenAI-compatible proxy with the auth token in the URL path."""
 
-    def fetch_models(self, *, api_key: str | None = None, timeout: float = 8.0):
+    def fetch_models(self, *, api_key: str | None = None, base_url: str | None = None, timeout: float = 8.0):
         """List models from the per-token catalog endpoint.
 
         UsePod exposes ``/proxy/<token>/v1/models``; the token lives in the
         path, so the base-class implementation (which builds the URL from the
         static ``base_url``) cannot reach it. Returns None when no token is
         available so callers fall back to ``fallback_models``.
+
+        ``base_url`` is accepted (and ignored — the URL is derived from the
+        token) only so the generic picker fetch in ``models.provider_model_ids``
+        — which calls ``fetch_models(api_key=…, base_url=…)`` for every api-key
+        provider — doesn't raise a TypeError. That TypeError was silently
+        swallowed, leaving UsePod with zero models in the picker. (#pod-models)
         """
         token = (api_key or "").strip()
         if not token:
