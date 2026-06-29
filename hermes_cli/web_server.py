@@ -12323,8 +12323,16 @@ def get_pod_status():
 
     balance_usdc = None
     try:
+        # UsePod sits behind Cloudflare, which 403s ("error 1010") a bare urllib
+        # request — send a browser-ish UA + the bearer token, matching the
+        # provider's own fetch_models. The token also lives in the URL path.
+        from providers.base import _profile_user_agent
+
         url = f"{USEPOD_API_BASE}/proxy/{token}/balance"
         req = urllib.request.Request(url, method="GET")
+        req.add_header("User-Agent", _profile_user_agent())
+        req.add_header("Authorization", f"Bearer {token}")
+        req.add_header("Accept", "application/json")
         with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         micro = data.get("usdc_balance")

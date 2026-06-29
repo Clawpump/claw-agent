@@ -211,7 +211,7 @@ function ModelResults({
         onSelect={onSetUpPod}
         value="usepod pod pay-as-you-go clawpump wallet"
       >
-        <span className="text-base leading-none">⚡</span>
+        <img alt="" className="size-4 shrink-0 rounded-sm" src="/claw-mark.png" />
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="font-medium">Pod</span>
           <span className="truncate text-xs text-muted-foreground">

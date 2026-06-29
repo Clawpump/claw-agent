@@ -456,7 +456,9 @@ export function ProvidersSettings({ onClose, onViewChange, view }: ProvidersSett
         onClick={() => setPodOpen(true)}
         type="button"
       >
-        <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/15 text-lg leading-none">⚡</span>
+        <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/15">
+          <img alt="" className="size-5 rounded-sm" src="/claw-mark.png" />
+        </span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="text-sm font-semibold">Pod</span>
           <span className="truncate text-xs text-muted-foreground">
