@@ -149,8 +149,9 @@ export function ModelPickerDialog({
       <PodSetupDialog
         onOpenChange={setPodOpen}
         onProvisioned={model => {
+          // Switch the live session onto Pod; keep the picker mounted so the
+          // dialog's "Pod ready" view shows (its Done button closes it).
           onSelect({ provider: 'usepod', model })
-          onOpenChange(false)
         }}
         open={podOpen}
       />

@@ -474,15 +474,9 @@ export function ProvidersSettings({ onClose, onViewChange, view }: ProvidersSett
 
       <PodSetupDialog
         onOpenChange={setPodOpen}
-        onProvisioned={() => {
-          setPodOpen(false)
-          notify({
-            durationMs: 4_000,
-            kind: 'success',
-            title: 'Pod ready',
-            message: 'Funded and set as your model provider.'
-          })
-        }}
+        // The dialog shows its own "Pod ready" view + toast and its Done button
+        // closes it; nothing extra to do here.
+        onProvisioned={() => undefined}
         open={podOpen}
       />
     </SettingsContent>

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 
 import { getPodWallets, provisionPod, type PodWallet } from '../hermes'
+import { notify } from '../store/notifications'
 
 import { InlineNotice } from './notifications'
 import { Button } from './ui/button'
@@ -42,6 +43,18 @@ export function PodSetupDialog({
   const [amount, setAmount] = useState(DEFAULT_AMOUNT)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Set once provisioning succeeds → switches the dialog to a "Pod ready" view.
+  const [done, setDone] = useState<{ model: string; amount: number; signature?: string; fundingError?: string } | null>(
+    null
+  )
+
+  // Fresh start every time the dialog reopens.
+  useEffect(() => {
+    if (open) {
+      setDone(null)
+      setError(null)
+    }
+  }, [open])
 
   // Default to the wallet with the most USDC so funding "just works".
   useEffect(() => {
@@ -68,7 +81,13 @@ export function PodSetupDialog({
         return
       }
       onProvisioned(res.model)
-      onOpenChange(false)
+      notify({
+        durationMs: 6_000,
+        kind: 'success',
+        title: 'Pod ready',
+        message: `Funded $${amountNum.toFixed(2)} USDC — Pod is now your model provider.`
+      })
+      setDone({ amount: amountNum, fundingError: res.funding_error || undefined, model: res.model, signature: res.signature })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Pod setup failed.')
     } finally {
@@ -79,6 +98,50 @@ export function PodSetupDialog({
   return (
     <Dialog onOpenChange={busy ? undefined : onOpenChange} open={open}>
       <DialogContent className="max-w-md gap-0 p-0">
+        {done ? (
+          <>
+            <DialogHeader className="border-b border-border px-4 py-3">
+              <DialogTitle className="flex items-center gap-2">
+                <span className="grid size-7 place-items-center rounded-full bg-emerald-500/20 text-emerald-300">✓</span>
+                Pod ready
+              </DialogTitle>
+              <DialogDescription className="text-xs leading-relaxed">
+                Pod is now your model provider. New chats run on it automatically.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="flex flex-col gap-3 p-4">
+              <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-3 text-sm">
+                <div className="font-semibold text-emerald-300">⚡ Using Pod</div>
+                <div className="mt-0.5 text-muted-foreground">
+                  Funded <span className="font-mono">${done.amount.toFixed(2)} USDC</span> · model{' '}
+                  <span className="font-mono">{done.model}</span>
+                </div>
+              </div>
+              {done.signature && (
+                <a
+                  className="text-xs text-primary underline-offset-2 hover:underline"
+                  href={`https://solscan.io/tx/${done.signature}`}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  View funding transaction ↗
+                </a>
+              )}
+              {done.fundingError && (
+                <InlineNotice kind="warning">
+                  Pod was created but the deposit didn’t confirm ({done.fundingError}). Top it up from Set up Pod →
+                  again, or it may settle shortly.
+                </InlineNotice>
+              )}
+            </div>
+
+            <DialogFooter className="flex-row items-center justify-end gap-2 bg-card p-3">
+              <Button onClick={() => onOpenChange(false)}>Done</Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <>
         <DialogHeader className="border-b border-border px-4 py-3">
           <DialogTitle>Set up Pod</DialogTitle>
           <DialogDescription className="text-xs leading-relaxed">
@@ -153,6 +216,8 @@ export function PodSetupDialog({
             )}
           </Button>
         </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   )
