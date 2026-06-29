@@ -428,9 +428,11 @@ export function ModelPickerDialog(props: Props) {
         <PodSetupDialog
           onClose={() => setPodOpen(false)}
           onProvisioned={(model) => {
-            // Backend already set provider=usepod + model in config; switch the
-            // live session too (slash in chat mode / onApply in standalone),
-            // then close the whole picker.
+            // Called from the dialog's "Pod ready" → Done. Backend already set
+            // provider=usepod + model in config; switch the live session too
+            // (slash in chat mode / onApply in standalone). applySelection calls
+            // onClose() → that unmounts this dialog and the whole picker.
+            setPodOpen(false);
             void applySelection(false, {
               message: "",
               model,

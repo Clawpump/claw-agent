@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Zap } from "lucide-react";
 import { api } from "@/lib/api";
 import type { AgentWalletBalance } from "@/lib/api";
@@ -35,7 +35,12 @@ export default function PodSetupDialog({
   const [amount, setAmount] = useState(DEFAULT_AMOUNT);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ model: string; amount: number; signature?: string } | null>(null);
+  const [done, setDone] = useState<{
+    model: string;
+    amount: number;
+    signature?: string;
+    fundingError?: string;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,8 +73,13 @@ export default function PodSetupDialog({
 
   const heading = useMemo(() => (done ? "Pod ready" : "Set up Pod"), [done]);
 
+  // Ref guard: setBusy is async, so a fast double-click could fire two
+  // provisions (= double on-chain spend) before the disabled state re-renders.
+  const submitting = useRef(false);
+
   const fund = async () => {
-    if (!canFund) return;
+    if (!canFund || submitting.current) return;
+    submitting.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -78,19 +88,32 @@ export default function PodSetupDialog({
         setError(res.error || res.funding_error || "Pod setup failed. Check the wallet balance and try again.");
         return;
       }
-      onProvisioned(res.model);
-      setDone({ amount: amountNum, model: res.model, signature: res.signature });
+      // Show the "Pod ready" view; the actual session switch + close happens on
+      // Done (onProvisioned), because the switch unmounts this dialog.
+      setDone({
+        amount: amountNum,
+        model: res.model,
+        signature: res.signature,
+        fundingError: res.funding_error || undefined,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Pod setup failed.");
     } finally {
       setBusy(false);
+      submitting.current = false;
     }
   };
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={() => (busy ? undefined : onClose())}
+      onClick={() => {
+        if (busy) return;
+        // After a successful provision, dismissing applies the switch (same as
+        // Done) so a backdrop click doesn't silently skip using the new Pod.
+        if (done) onProvisioned(done.model);
+        else onClose();
+      }}
     >
       <div
         className="w-full max-w-md rounded-lg border border-border bg-card shadow-xl"
@@ -120,8 +143,14 @@ export default function PodSetupDialog({
                 View funding transaction ↗
               </a>
             )}
+            {done.fundingError && (
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                Pod was created but the deposit didn’t confirm ({done.fundingError}). It may settle
+                shortly, or run Set up Pod again to top it up.
+              </div>
+            )}
             <div className="flex justify-end">
-              <Button onClick={onClose}>Done</Button>
+              <Button onClick={() => onProvisioned(done.model)}>Done</Button>
             </div>
           </div>
         ) : (
@@ -148,7 +177,7 @@ export default function PodSetupDialog({
                     <Select value={agentId} onValueChange={setAgentId}>
                       {rows.map((w) => (
                         <SelectOption key={w.agent_id} value={w.agent_id}>
-                          {walletLabel(w)} — ${(w.usdc_balance ?? 0).toFixed(2)} USDC
+                          {`${walletLabel(w)} — $${(w.usdc_balance ?? 0).toFixed(2)} USDC`}
                         </SelectOption>
                       ))}
                     </Select>
