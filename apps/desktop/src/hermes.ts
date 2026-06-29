@@ -735,7 +735,11 @@ export function provisionPod(
     ...profileScoped(),
     path: '/api/clawpump/pod/provision',
     method: 'POST',
-    body: { agent_id: agentId, amount }
+    body: { agent_id: agentId, amount },
+    // Register + on-chain USDC deposit can take 30-90s; the default 15s fetch
+    // timeout would abort a successful (money-spent) provision. Match the
+    // backend's 120s MCP timeout so the UI waits for the real result.
+    timeoutMs: 120_000
   })
 }
 
