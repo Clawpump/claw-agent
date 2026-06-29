@@ -358,16 +358,6 @@ export function ChatBar({
       }
     })
 
-    // Drain a one-shot prompt left by a "send to chat" flow that navigated here
-    // (x402 "Use in chat", wallet "Tokenize"). Its insert event would have
-    // raced this composer's mount, so it parks the text in $pendingChatPrompt
-    // and we drop it in now that we're ready. Cleared so it fires exactly once.
-    const pending = $pendingChatPrompt.get()
-    if (pending) {
-      $pendingChatPrompt.set(null)
-      appendExternalText(pending, 'block')
-    }
-
     return () => {
       offFocus()
       offInsert()
@@ -1238,6 +1228,15 @@ export function ChatBar({
   useEffect(() => {
     const { attachments, text } = takeSessionDraft(activeQueueSessionKey)
     loadIntoComposer(text, attachments)
+
+    // One-shot prompt from a "send to chat" flow (x402 "Use in chat", wallet
+    // "Tokenize") that navigated to a fresh chat. Drain it AFTER the session
+    // draft load so it isn't overwritten; append if there's already a draft.
+    const pending = $pendingChatPrompt.get()
+    if (pending) {
+      $pendingChatPrompt.set(null)
+      loadIntoComposer(text.trim() ? `${text.trimEnd()}\n\n${pending}` : pending, attachments)
+    }
 
     return () => {
       const editing = queueEditRef.current
