@@ -12097,13 +12097,21 @@ class _McpToolError(RuntimeError):
     """The tool ran but returned an error — the session itself is healthy."""
 
 
-def _clawpump_call(tool: str, arguments: Optional[dict] = None, *, timeout: float = 20) -> Any:
+def _clawpump_call(
+    tool: str, arguments: Optional[dict] = None, *, timeout: float = 20, prefer_structured: bool = False
+) -> Any:
     """Call a ClawPump MCP tool over the dashboard's warm, reused session.
 
     Reuses one long-lived connection and reconnects only if the session has
     died, so the dashboard behaves like the agent's persistent connection
     instead of reconnecting (and stalling) per request. Returns parsed JSON;
     raises ``RuntimeError`` when the MCP is unconfigured or the tool errors.
+
+    ``prefer_structured`` returns the tool's ``structuredContent`` (the machine
+    channel) when present, instead of the human-visible text. Needed for tools
+    that REDACT secrets in the text but put the real value in structuredContent
+    (e.g. usepod_provision returns a placeholder api_token in text and the real
+    token in structuredContent). Default off so existing callers are unchanged.
     """
     global _warm_mcp_server
 
@@ -12123,9 +12131,14 @@ def _clawpump_call(tool: str, arguments: Optional[dict] = None, *, timeout: floa
             text = "".join(b.text for b in (result.content or []) if hasattr(b, "text"))
             if getattr(result, "isError", False):
                 raise _McpToolError(text or "MCP tool returned an error")
+            if prefer_structured:
+                sc = getattr(result, "structuredContent", None)
+                if isinstance(sc, dict) and sc:
+                    return sc
             return text
 
-        data = _parse_mcp_json(_run_on_mcp_loop(_coro, timeout=timeout))
+        raw = _run_on_mcp_loop(_coro, timeout=timeout)
+        data = raw if isinstance(raw, dict) else _parse_mcp_json(raw)
         if isinstance(data, dict) and isinstance(data.get("error"), str) and data["error"]:
             raise _McpToolError(data["error"])
         return data
@@ -12240,6 +12253,10 @@ async def post_pod_provision(body: PodProvisionBody, profile: Optional[str] = No
             "usepod_provision",
             {"amount": amount, "agent_id": agent_id, "confirm_deposit": True},
             timeout=120,
+            # The real api_token is only in structuredContent — the text channel
+            # redacts it to a placeholder. Without this we'd persist the
+            # placeholder as USEPOD_API_KEY and Pod would look set but not work.
+            prefer_structured=True,
         )
         # Token extraction goes through the battle-tested downstream helper
         # (tolerates nesting/escaping); signature is best-effort from _unwrap.
