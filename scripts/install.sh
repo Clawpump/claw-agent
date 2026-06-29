@@ -1135,6 +1135,24 @@ clone_repo() {
             log_info "Existing installation found, updating..."
             cd "$INSTALL_DIR"
 
+            # Re-point a pre-existing checkout at the ClawPump fork. Anyone who
+            # installed upstream Hermes has origin=NousResearch here; without
+            # this, every update pulls upstream (none of the ClawPump features —
+            # x402, Pod, the ClawPump MCP) into the install. Force origin to our
+            # fork so the fetch below lands the right source.
+            local repo_repointed=""
+            local current_origin
+            current_origin="$(git remote get-url origin 2>/dev/null || echo '')"
+            case "$current_origin" in
+                *[Cc]lawpump/claw-agent*) : ;;
+                *)
+                    log_warn "Re-pointing origin to the ClawPump fork (was: ${current_origin:-none})."
+                    git remote set-url origin "$REPO_URL_HTTPS" 2>/dev/null \
+                        || git remote add origin "$REPO_URL_HTTPS"
+                    repo_repointed="yes"
+                    ;;
+            esac
+
             local autostash_ref=""
             if [ -n "$(git status --porcelain)" ]; then
                 # A previously interrupted update can leave the index with
@@ -1164,11 +1182,23 @@ clone_repo() {
             git remote set-branches origin "$BRANCH" 2>/dev/null || true
             git fetch origin "$BRANCH"
             git checkout "$BRANCH"
-            git pull --ff-only origin "$BRANCH"
+            if [ "$repo_repointed" = "yes" ]; then
+                # Upstream -> fork is a diverged history; a fast-forward is
+                # impossible across the fork point. Hard-reset the branch onto
+                # the fork so the working tree becomes the ClawPump source.
+                log_info "Resetting $BRANCH to the ClawPump fork (origin/$BRANCH)..."
+                git reset --hard "origin/$BRANCH"
+            else
+                git pull --ff-only origin "$BRANCH"
+            fi
 
             if [ -n "$autostash_ref" ]; then
                 local restore_now="yes"
-                if [ -t 0 ] && [ -t 1 ]; then
+                if [ "$repo_repointed" = "yes" ]; then
+                    # Don't replay upstream-Hermes local edits onto the fork —
+                    # they target different code and would only conflict.
+                    restore_now="no"
+                elif [ -t 0 ] && [ -t 1 ]; then
                     echo
                     log_warn "Local changes were stashed before updating."
                     log_warn "Restoring them may reapply local customizations onto the updated codebase."

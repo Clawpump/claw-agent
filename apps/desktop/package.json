@@ -2,7 +2,7 @@
   "name": "hermes",
   "productName": "Claw Agent",
   "private": true,
-  "version": "0.15.2",
+  "version": "0.15.3",
   "description": "Claw Agent by ClawPump — native desktop app for Solana agents, built on Hermes Agent by Nous Research.",
   "author": "ClawPump (built on Hermes by Nous Research)",
   "type": "module",
