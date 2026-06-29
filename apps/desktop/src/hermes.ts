@@ -703,9 +703,64 @@ export function setGlobalModel(
 export interface PodWallet {
   agent_id: string
   name?: string | null
+  avatar_url?: string | null
+  token_mint?: string | null
   wallet_address: string | null
   usdc_balance: number | null
   sol_balance?: number | null
+  updated_at?: string
+}
+
+export interface WalletTransferInput {
+  agent_id: string
+  to: string
+  amount: number
+  token: 'SOL' | 'USDC'
+  add_to_whitelist?: boolean
+  label?: string
+}
+
+/** Transfer SOL/USDC from an agent wallet (whitelist-gated; irreversible). */
+export function transferWallet(
+  body: WalletTransferInput
+): Promise<{ ok: boolean; error?: string; code?: string; result?: unknown }> {
+  return window.hermesDesktop.api<{ ok: boolean; error?: string; code?: string; result?: unknown }>({
+    ...profileScoped(),
+    path: '/api/wallet/transfer',
+    method: 'POST',
+    body
+  })
+}
+
+export interface X402Pricing {
+  network?: string
+  asset?: string
+  scheme?: string
+  priceUsdc?: number | null
+  priceLabel?: string
+}
+
+export interface X402Result {
+  resourceUrl?: string
+  name?: string
+  description?: string
+  category?: string
+  method?: string
+  host?: string
+  match?: string
+  qualityScore?: number | null
+  verified?: boolean
+  pricing?: X402Pricing[]
+}
+
+/** Search the Dexter x402 bazaar via the ClawPump MCP. */
+export function searchX402(
+  query: string
+): Promise<{ ok: boolean; error?: string; query?: string; results: X402Result[] }> {
+  return window.hermesDesktop.api<{ ok: boolean; error?: string; query?: string; results: X402Result[] }>({
+    ...profileScoped(),
+    path: `/api/x402/search?q=${encodeURIComponent(query)}`
+  })
 }
 
 /** Whether a Pod is configured as the provider, with its remaining balance. */
