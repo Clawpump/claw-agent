@@ -475,3 +475,125 @@ def persist_usepod_credentials(api_token: str, deposit_code: str = "") -> bool:
         return True
     except Exception:
         return False
+
+
+# ── Deterministic Pod setup (terminal flow, mirrors the desktop modal) ─────
+# Lets the TUI run a clean "pick wallet → amount → confirm → provision" flow
+# directly, instead of injecting a chat message and asking the agent to do it.
+
+
+def _clawpump_mcp_config():
+    """Return (server_name, resolved_config) for the ClawPump MCP, or (None, None)."""
+    try:
+        from hermes_cli.mcp_config import _get_mcp_servers, _resolve_mcp_server_config
+
+        servers = _get_mcp_servers()
+        name = next((n for n in ("clawpump", "clawpump-stdio") if n in servers), None)
+        if not name:
+            return (None, None)
+        return (name, _resolve_mcp_server_config(servers[name]))
+    except Exception:
+        return (None, None)
+
+
+def _clawpump_tool_struct(tool: str, arguments=None, *, timeout: float = 120):
+    """Call a ClawPump MCP tool, returning its structuredContent when present.
+
+    Like ``mcp_config._call_single_tool`` but keeps ``structuredContent`` — the
+    machine channel where ``usepod_provision`` puts the REAL api_token (the text
+    channel redacts it). Falls back to the parsed text JSON otherwise. Blocking.
+    """
+    import json as _json
+
+    name, config = _clawpump_mcp_config()
+    if not name:
+        raise RuntimeError("ClawPump MCP is not configured. Run `claw clawpump setup`.")
+
+    from tools.mcp_tool import (
+        _ensure_mcp_loop,
+        _run_on_mcp_loop,
+        _connect_server,
+        _stop_mcp_loop_if_idle,
+    )
+
+    _ensure_mcp_loop()
+    out = {"data": None, "error": None}
+
+    async def _call():
+        import asyncio as _asyncio
+
+        server = await _asyncio.wait_for(_connect_server(name, config), timeout=timeout)
+        try:
+            result = await server.session.call_tool(tool, arguments=arguments or {})
+            text = "".join(b.text for b in (result.content or []) if hasattr(b, "text"))
+            if getattr(result, "isError", False):
+                out["error"] = text or "MCP tool returned an error"
+                return
+            sc = getattr(result, "structuredContent", None)
+            if isinstance(sc, dict) and sc:
+                out["data"] = sc
+            else:
+                try:
+                    out["data"] = _json.loads(text) if text else None
+                except Exception:
+                    out["data"] = text
+        finally:
+            await server.shutdown()
+
+    try:
+        _run_on_mcp_loop(_call(), timeout=timeout + 30)
+    finally:
+        try:
+            _stop_mcp_loop_if_idle()
+        except Exception:
+            pass
+
+    if out["error"]:
+        raise RuntimeError(out["error"])
+    return out["data"]
+
+
+def usepod_fetch_wallets():
+    """Return [{agent_id, name, usdc_balance}] for the user's ClawPump wallets.
+
+    Sorted by USDC balance (most-funded first) so the picker can default to it.
+    """
+    summaries = _clawpump_tool_struct("get_wallet_summaries", {}, timeout=30)
+    if isinstance(summaries, dict):
+        summaries = summaries.get("wallets") or summaries.get("summaries") or []
+    rows = [w for w in (summaries or []) if isinstance(w, dict) and w.get("agent_id")]
+
+    # Enrich with display names (summaries carry only the agent_id UUID).
+    try:
+        agents = _clawpump_tool_struct("list_agents", {}, timeout=30)
+        if isinstance(agents, dict):
+            agents = agents.get("agents") or []
+        names = {a.get("id"): a.get("name") for a in (agents or []) if isinstance(a, dict)}
+        for w in rows:
+            w["name"] = names.get(w.get("agent_id")) or w.get("name")
+    except Exception:
+        pass
+
+    rows.sort(key=lambda w: (w.get("usdc_balance") or 0), reverse=True)
+    return rows
+
+
+def usepod_provision_call(agent_id: str, amount: float) -> dict:
+    """Register + fund a Pod from ``agent_id``'s wallet. Returns the parsed dict
+    with the REAL api_token (read from structuredContent). Spends on-chain USDC."""
+    raw = _clawpump_tool_struct(
+        "usepod_provision",
+        {"agent_id": agent_id, "amount": amount, "confirm_deposit": True},
+        timeout=120,
+    )
+    data = raw if isinstance(raw, dict) else {}
+    # Token may still arrive nested/escaped — the existing extractor handles it.
+    tok = usepod_provision_token("mcp_clawpump_usepod_provision", raw)
+    api_token = (tok[0] if tok else "") or str(data.get("api_token") or data.get("token") or "").strip()
+    return {
+        "api_token": api_token,
+        "deposit_code": str(data.get("deposit_code") or "").strip(),
+        "signature": str(data.get("signature") or ""),
+        "funding_error": str(data.get("funding_error") or ""),
+        "amount": data.get("amount"),
+    }

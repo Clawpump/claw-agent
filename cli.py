@@ -7009,6 +7009,100 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         else:
             _cprint("    (session only — add --global to persist)")
 
+    def _run_pod_setup_flow(self) -> bool:
+        """Deterministic Pod setup from the TUI picker (mirrors the desktop modal).
+
+        Pick wallet → amount → confirm → provision + fund on-chain → switch onto
+        Pod. Returns True when it handled the selection (success OR user cancel);
+        False to fall back to the chat-guided flow (e.g. MCP unavailable). Runs on
+        the main thread via the existing curses/input helpers, which own the
+        terminal cleanly; the slow on-chain provision prints progress.
+        """
+        try:
+            from hermes_cli import distribution as _dist
+        except Exception:
+            return False
+
+        try:
+            wallets = _dist.usepod_fetch_wallets()
+        except Exception:
+            logger.debug("Pod setup: wallet fetch failed", exc_info=True)
+            return False
+        if not wallets:
+            return False
+
+        labels = [
+            f"{w.get('name') or (w.get('agent_id') or '')[:8]} — ${(w.get('usdc_balance') or 0):.2f} USDC"
+            for w in wallets
+        ]
+        idx = self._run_curses_picker("Pay from which agent wallet?", labels, 0)
+        if idx is None or idx >= len(wallets):
+            _cprint("  Pod setup cancelled.")
+            return True
+        wallet = wallets[idx]
+
+        amt_str = self._prompt_text_input("  Amount of USDC to fund the pod [5]: ")
+        if amt_str is None:
+            _cprint("  Pod setup cancelled.")
+            return True
+        amt_str = (amt_str or "").strip() or "5"
+        try:
+            amount = float(amt_str)
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            _cprint("  Invalid amount — Pod setup cancelled.")
+            return True
+
+        bal = wallet.get("usdc_balance") or 0
+        if amount > bal:
+            _cprint(f"  ⚠ Wallet holds ${bal:.2f} USDC but you asked for ${amount:.2f}.")
+
+        confirm = self._run_curses_picker(
+            f"Fund ${amount:.2f} USDC from '{labels[idx]}' and use Pod? (on-chain spend)",
+            ["Yes — fund & use Pod", "Cancel"],
+            0,
+        )
+        if confirm != 0:
+            _cprint("  Pod setup cancelled.")
+            return True
+
+        _cprint(f"  Provisioning Pod and funding ${amount:.2f} USDC on-chain… (~30-60s)")
+        try:
+            res = _dist.usepod_provision_call(wallet["agent_id"], amount)
+        except Exception as exc:
+            _cprint(f"  ✗ Pod setup failed: {exc}")
+            return True
+
+        api_token = res.get("api_token") or ""
+        if not api_token:
+            _cprint(f"  ✗ Pod setup failed: {res.get('funding_error') or 'no token returned'}")
+            return True
+
+        _dist.persist_usepod_credentials(api_token, res.get("deposit_code") or "")
+        model, provider, base_url = _dist.usepod_pod_switch_target(
+            api_token, getattr(self, "model", "") or ""
+        )
+        self._pending_pod_activation = {
+            "model": model,
+            "provider": provider,
+            "base_url": base_url,
+            "api_key": api_token,
+        }
+        try:
+            self._activate_pending_pod()
+        except Exception:
+            logger.debug("Pod setup: activate_pending_pod failed", exc_info=True)
+
+        if res.get("funding_error"):
+            _cprint(
+                f"  ✓ Pod created and selected ({model}). "
+                f"⚠ funding issue: {res['funding_error']} — top up with the Pod menu."
+            )
+        else:
+            _cprint(f"  ✓ Pod ready — funded ${amount:.2f} USDC, now using {model}.")
+        return True
+
     def _handle_model_picker_selection(self, persist_global: bool = False) -> None:
         state = self._model_picker_state
         if not state:
@@ -7027,6 +7121,15 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             # failing switch. Hand the agent the configure instruction.
             if provider_data.get("clawpump_setup"):
                 self._close_model_picker()
+                # Deterministic terminal flow first (pick wallet → amount →
+                # confirm → provision), mirroring the desktop modal. Falls back
+                # to the chat-guided flow if it can't run (MCP unconfigured, off
+                # the main thread, etc.).
+                try:
+                    if self._run_pod_setup_flow():
+                        return
+                except Exception:
+                    logger.debug("Pod setup flow failed; falling back to chat", exc_info=True)
                 try:
                     from hermes_cli.distribution import usepod_setup_request_message
                     _msg = usepod_setup_request_message()
