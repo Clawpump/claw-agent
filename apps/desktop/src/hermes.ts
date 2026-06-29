@@ -708,6 +708,14 @@ export interface PodWallet {
   sol_balance?: number | null
 }
 
+/** Whether a Pod is configured as the provider, with its remaining balance. */
+export function getPodStatus(): Promise<{ connected: boolean; balance_usdc?: number | null }> {
+  return window.hermesDesktop.api<{ connected: boolean; balance_usdc?: number | null }>({
+    ...profileScoped(),
+    path: '/api/clawpump/pod/status'
+  })
+}
+
 /** ClawPump agent wallets (id + name + USDC balance) for the Pod funding picker. */
 export function getPodWallets(): Promise<{ ok: boolean; wallets: PodWallet[]; error?: string }> {
   return window.hermesDesktop.api<{ ok: boolean; wallets: PodWallet[]; error?: string }>({

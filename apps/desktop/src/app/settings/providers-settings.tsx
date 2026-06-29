@@ -1,4 +1,5 @@
 import { useStore } from '@nanostores/react'
+import { useQuery } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
@@ -14,7 +15,7 @@ import {
 import { PodSetupDialog } from '@/components/pod-setup-dialog'
 import { Button } from '@/components/ui/button'
 import { SearchField } from '@/components/ui/search-field'
-import { disconnectOAuthProvider, listOAuthProviders } from '@/hermes'
+import { disconnectOAuthProvider, getPodStatus, listOAuthProviders } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { Check, ChevronDown, ChevronRight, KeyRound, Loader2, Terminal, Trash2 } from '@/lib/icons'
 import { cn } from '@/lib/utils'
@@ -303,6 +304,9 @@ export function ProvidersSettings({ onClose, onViewChange, view }: ProvidersSett
   // ClawPump: "Pod" is set up by funding it from an agent wallet, not an OAuth
   // sign-in — so it gets a promoted card in Accounts that opens the fund dialog.
   const [podOpen, setPodOpen] = useState(false)
+  const podStatus = useQuery({ queryKey: ['pod-status'], queryFn: getPodStatus, staleTime: 30_000 })
+  const podConnected = podStatus.data?.connected ?? false
+  const podBalance = podStatus.data?.balance_usdc
   const [disconnecting, setDisconnecting] = useState<null | string>(null)
   // Free-text filter for the API-keys view (provider name / env-var key / desc).
   const [keyQuery, setKeyQuery] = useState('')
@@ -456,12 +460,22 @@ export function ProvidersSettings({ onClose, onViewChange, view }: ProvidersSett
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="text-sm font-semibold">Pod</span>
           <span className="truncate text-xs text-muted-foreground">
-            Pay-as-you-go inference — fund from your ClawPump wallet
+            {podConnected
+              ? podBalance != null
+                ? `Connected · $${podBalance.toFixed(2)} USDC left · click to top up`
+                : 'Connected — your inference provider'
+              : 'Pay-as-you-go inference — fund from your ClawPump wallet'}
           </span>
         </span>
-        <span className="shrink-0 rounded-md border border-primary/40 px-2 py-1 text-[0.62rem] font-medium uppercase tracking-wide text-primary">
-          Set up
-        </span>
+        {podConnected ? (
+          <span className="shrink-0 rounded-md border border-emerald-500/40 px-2 py-1 text-[0.62rem] font-medium uppercase tracking-wide text-emerald-400">
+            ✓ Connected
+          </span>
+        ) : (
+          <span className="shrink-0 rounded-md border border-primary/40 px-2 py-1 text-[0.62rem] font-medium uppercase tracking-wide text-primary">
+            Set up
+          </span>
+        )}
       </button>
 
       <OAuthPicker

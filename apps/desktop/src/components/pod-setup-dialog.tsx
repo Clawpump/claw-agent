@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 
 import { getPodWallets, provisionPod, type PodWallet } from '../hermes'
@@ -31,6 +31,7 @@ export function PodSetupDialog({
   onOpenChange: (open: boolean) => void
   onProvisioned: (model: string) => void
 }) {
+  const queryClient = useQueryClient()
   const wallets = useQuery({
     queryKey: ['pod-wallets'],
     queryFn: getPodWallets,
@@ -81,6 +82,8 @@ export function PodSetupDialog({
         return
       }
       onProvisioned(res.model)
+      // Refresh the "connected" badges so Pod flips from "Set up" to "Connected".
+      void queryClient.invalidateQueries({ queryKey: ['pod-status'] })
       notify({
         durationMs: 6_000,
         kind: 'success',

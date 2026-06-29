@@ -6,7 +6,7 @@ import { currentPickerSelection } from '@/lib/model-status-label'
 import type { ModelOptionProvider, ModelOptionsResponse, ModelPricing } from '@/types/hermes'
 
 import type { HermesGateway } from '../hermes'
-import { getGlobalModelOptions } from '../hermes'
+import { getGlobalModelOptions, getPodStatus } from '../hermes'
 import { cn } from '../lib/utils'
 import { startManualOnboarding } from '../store/onboarding'
 
@@ -180,6 +180,9 @@ function ModelResults({
 }) {
   const { t } = useI18n()
   const copy = t.modelPicker
+  const podStatus = useQuery({ queryKey: ['pod-status'], queryFn: getPodStatus, staleTime: 30_000 })
+  const podConnected = podStatus.data?.connected ?? false
+  const podBalance = podStatus.data?.balance_usdc
 
   if (loading) {
     return <LoadingResults />
@@ -212,10 +215,18 @@ function ModelResults({
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="font-medium">Pod</span>
           <span className="truncate text-xs text-muted-foreground">
-            Pay-as-you-go inference — fund from your ClawPump wallet
+            {podConnected
+              ? podBalance != null
+                ? `Connected · $${podBalance.toFixed(2)} USDC left`
+                : 'Connected — your inference provider'
+              : 'Pay-as-you-go inference — fund from your ClawPump wallet'}
           </span>
         </span>
-        <span className="shrink-0 text-[0.62rem] uppercase tracking-wide text-primary">Set up</span>
+        {podConnected ? (
+          <span className="shrink-0 text-[0.62rem] uppercase tracking-wide text-emerald-400">✓ Connected</span>
+        ) : (
+          <span className="shrink-0 text-[0.62rem] uppercase tracking-wide text-primary">Set up</span>
+        )}
       </CommandItem>
     </CommandGroup>
   ) : null

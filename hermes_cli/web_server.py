@@ -12303,6 +12303,39 @@ async def post_pod_provision(body: PodProvisionBody, profile: Optional[str] = No
         return {"ok": False, "error": str(exc)}
 
 
+@app.get("/api/clawpump/pod/status")
+def get_pod_status():
+    """Whether a UsePod Pod is configured + its remaining USDC balance.
+
+    Lets the desktop show Pod as "Connected" (with balance) instead of "Set up"
+    once provisioned. Reads USEPOD_API_KEY from ~/.hermes/.env (never returns the
+    token) and best-effort fetches the pod's balance. Sync def — quick file read
+    + one short HTTP GET.
+    """
+    from hermes_cli.config import get_env_value
+    from hermes_cli.auth import USEPOD_API_BASE
+
+    token = (get_env_value("USEPOD_API_KEY") or "").strip()
+    # Empty, or the redacted placeholder from the old token-handling bug, both
+    # mean "not really connected".
+    if not token or token.startswith("<") or "applied" in token.lower():
+        return {"connected": False}
+
+    balance_usdc = None
+    try:
+        url = f"{USEPOD_API_BASE}/proxy/{token}/balance"
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        micro = data.get("usdc_balance")
+        if micro is not None:
+            balance_usdc = round(float(micro) / 1_000_000.0, 4)
+    except Exception:
+        pass  # token is set but the balance probe failed — still "connected"
+
+    return {"connected": True, "balance_usdc": balance_usdc}
+
+
 class WalletTransferBody(BaseModel):
     agent_id: str
     to: str
