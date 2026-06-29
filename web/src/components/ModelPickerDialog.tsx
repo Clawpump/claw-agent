@@ -5,8 +5,9 @@ import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { Input } from "@nous-research/ui/ui/components/input";
 import { Label } from "@nous-research/ui/ui/components/label";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import PodSetupDialog from "@/components/PodSetupDialog";
 import type { GatewayClient } from "@/lib/gatewayClient";
-import { Check, Search, X } from "lucide-react";
+import { Check, Search, X, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn, themedBody } from "@/lib/utils";
@@ -110,6 +111,7 @@ export function ModelPickerDialog(props: Props) {
   const [selectedModel, setSelectedModel] = useState("");
   const [query, setQuery] = useState("");
   const [persistGlobal, setPersistGlobal] = useState(alwaysGlobal);
+  const [podOpen, setPodOpen] = useState(false);
   const [applying, setApplying] = useState(false);
   const [pendingConfirm, setPendingConfirm] =
     useState<PendingExpensiveConfirm | null>(null);
@@ -366,6 +368,13 @@ export function ModelPickerDialog(props: Props) {
         </div>
 
         <footer className="border-t border-border p-3 flex items-center justify-between gap-3 flex-wrap">
+          <Button
+            outlined
+            onClick={() => setPodOpen(true)}
+            className="gap-1.5"
+          >
+            <Zap className="h-3.5 w-3.5 text-primary" /> Set up Pod
+          </Button>
           {alwaysGlobal ? (
             <span className="text-xs text-muted-foreground">
               Saves to config.yaml — applies to new sessions.
@@ -415,6 +424,22 @@ export function ModelPickerDialog(props: Props) {
           void applySelection(true, pending);
         }}
       />
+      {podOpen && (
+        <PodSetupDialog
+          onClose={() => setPodOpen(false)}
+          onProvisioned={(model) => {
+            // Backend already set provider=usepod + model in config; switch the
+            // live session too (slash in chat mode / onApply in standalone),
+            // then close the whole picker.
+            void applySelection(false, {
+              message: "",
+              model,
+              persistGlobal: true,
+              provider: "usepod",
+            });
+          }}
+        />
+      )}
     </div>,
     document.body,
   );

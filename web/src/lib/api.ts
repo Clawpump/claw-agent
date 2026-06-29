@@ -343,6 +343,19 @@ export interface WalletTransferResponse {
   result?: unknown;
 }
 
+export interface PodStatusResponse {
+  connected: boolean;
+  balance_usdc?: number | null;
+}
+
+export interface PodProvisionResponse {
+  ok: boolean;
+  model?: string;
+  signature?: string;
+  funding_error?: string;
+  error?: string;
+}
+
 export interface X402Pricing {
   network?: string;
   asset?: string;
@@ -462,6 +475,16 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+    }),
+
+  // ── UsePod "Pod" — pay-as-you-go inference funded from a ClawPump wallet ──
+  getPodStatus: () =>
+    fetchJSON<PodStatusResponse>("/api/clawpump/pod/status"),
+  provisionPod: (agentId: string, amount: number) =>
+    fetchJSON<PodProvisionResponse>("/api/clawpump/pod/provision", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent_id: agentId, amount }),
     }),
 
   // ── Agent Mail (AgentMail) ─────────────────────────────────────────

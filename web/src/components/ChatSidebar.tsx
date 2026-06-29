@@ -29,6 +29,7 @@ import { Badge } from "@nous-research/ui/ui/components/badge";
 import { Card } from "@nous-research/ui/ui/components/card";
 
 import { ModelPickerDialog } from "@/components/ModelPickerDialog";
+import PodCredits from "@/components/PodCredits";
 import { ModelReloadConfirm } from "@/components/ModelReloadConfirm";
 import { ReasoningPicker } from "@/components/ReasoningPicker";
 import { ToolCall, type ToolEntry } from "@/components/ToolCall";
@@ -121,6 +122,7 @@ export function ChatSidebar({
   // elsewhere, so the badge would go stale. `/api/model/info` is profile-scoped
   // by `fetchJSON`, so it reads the same profile this sidebar is scoped to.
   const [effectiveModel, setEffectiveModel] = useState("");
+  const [effectiveProvider, setEffectiveProvider] = useState("");
   // Whether the effective model supports reasoning effort — gates the
   // ReasoningPicker. Read from the same `/api/model/info` capabilities the
   // (currently unused) ModelInfoCard surfaces, so the dashboard exposes a
@@ -143,6 +145,7 @@ export function ChatSidebar({
       .getModelInfo()
       .then((r) => {
         if (r?.model) setEffectiveModel(String(r.model));
+        setEffectiveProvider(r?.provider ? String(r.provider) : "");
         setSupportsReasoning(!!r?.capabilities?.supports_reasoning);
         // Bump so ReasoningPicker re-reads the saved effort for the new model.
         setModelRefreshKey((k) => k + 1);
@@ -448,6 +451,8 @@ export function ChatSidebar({
             <ChevronDown className="size-3.5 shrink-0 text-text-secondary" />
           </span>
         </Button>
+
+        <PodCredits provider={effectiveProvider} />
 
         <Badge tone={STATE_TONE[state]} className="hidden shrink-0 md:inline-flex">
           {STATE_LABEL[state]}
