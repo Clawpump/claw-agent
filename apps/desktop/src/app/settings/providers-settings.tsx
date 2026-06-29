@@ -11,6 +11,7 @@ import {
   providerTitle,
   sortProviders
 } from '@/components/desktop-onboarding-overlay'
+import { PodSetupDialog } from '@/components/pod-setup-dialog'
 import { Button } from '@/components/ui/button'
 import { SearchField } from '@/components/ui/search-field'
 import { disconnectOAuthProvider, listOAuthProviders } from '@/hermes'
@@ -299,6 +300,9 @@ export function ProvidersSettings({ onClose, onViewChange, view }: ProvidersSett
   const { rowProps, vars } = useEnvCredentials()
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([])
   const [openProvider, setOpenProvider] = useState<null | string>(null)
+  // ClawPump: "Pod" is set up by funding it from an agent wallet, not an OAuth
+  // sign-in — so it gets a promoted card in Accounts that opens the fund dialog.
+  const [podOpen, setPodOpen] = useState(false)
   const [disconnecting, setDisconnecting] = useState<null | string>(null)
   // Free-text filter for the API-keys view (provider name / env-var key / desc).
   const [keyQuery, setKeyQuery] = useState('')
@@ -443,12 +447,43 @@ export function ProvidersSettings({ onClose, onViewChange, view }: ProvidersSett
 
   return (
     <SettingsContent>
+      <button
+        className="mb-4 flex w-full items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 text-left transition-colors hover:border-primary/50"
+        onClick={() => setPodOpen(true)}
+        type="button"
+      >
+        <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/15 text-lg leading-none">⚡</span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="text-sm font-semibold">Pod</span>
+          <span className="truncate text-xs text-muted-foreground">
+            Pay-as-you-go inference — fund from your ClawPump wallet
+          </span>
+        </span>
+        <span className="shrink-0 rounded-md border border-primary/40 px-2 py-1 text-[0.62rem] font-medium uppercase tracking-wide text-primary">
+          Set up
+        </span>
+      </button>
+
       <OAuthPicker
         disconnecting={disconnecting}
         onDisconnect={provider => void handleDisconnect(provider)}
         onTerminalDisconnect={handleTerminalDisconnect}
         onWantApiKey={() => onViewChange('keys')}
         providers={oauthProviders}
+      />
+
+      <PodSetupDialog
+        onOpenChange={setPodOpen}
+        onProvisioned={() => {
+          setPodOpen(false)
+          notify({
+            durationMs: 4_000,
+            kind: 'success',
+            title: 'Pod ready',
+            message: 'Funded and set as your model provider.'
+          })
+        }}
+        open={podOpen}
       />
     </SettingsContent>
   )
