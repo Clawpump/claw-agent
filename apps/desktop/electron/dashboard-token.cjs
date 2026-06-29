@@ -12,13 +12,13 @@ const DEFAULT_TOKEN_FETCH_TIMEOUT_MS = 3_000
 async function fetchPublicText(url, options = {}) {
   const { protocol } = new URL(url)
   if (protocol !== 'http:' && protocol !== 'https:') {
-    throw new Error(`Unsupported Hermes backend URL protocol: ${protocol}`)
+    throw new Error(`Unsupported Claw Agent backend URL protocol: ${protocol}`)
   }
 
   const timeoutMs = options.timeoutMs ?? DEFAULT_TOKEN_FETCH_TIMEOUT_MS
   const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) }).catch(error => {
     if (error.name === 'TimeoutError') {
-      throw new Error(`Timed out connecting to Hermes backend after ${timeoutMs}ms`)
+      throw new Error(`Timed out connecting to Claw Agent backend after ${timeoutMs}ms`)
     }
     throw error
   })
@@ -73,7 +73,7 @@ function isForeignBackendToken({ servedToken, spawnToken, childAlive }) {
  * failing loudly on a foreign backend. `childAlive` is a thunk so liveness is
  * sampled after the fetch, not before.
  */
-async function adoptServedDashboardToken(baseUrl, spawnToken, { childAlive, label = 'Hermes backend', ...options }) {
+async function adoptServedDashboardToken(baseUrl, spawnToken, { childAlive, label = 'Claw Agent backend', ...options }) {
   const servedToken = await resolveServedDashboardToken(baseUrl, spawnToken, options).catch(error => {
     options.rememberLog?.(`[boot] could not read served dashboard token (${label}): ${error.message}`)
     return spawnToken

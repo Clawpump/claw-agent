@@ -21,75 +21,75 @@ const SYSTEM_MONO =
 
 export const DEFAULT_TYPOGRAPHY: DesktopThemeTypography = { fontSans: SYSTEM_SANS, fontMono: SYSTEM_MONO }
 
-const NOUS_BLUE = '#0053FD'
-const PSYCHE_BLUE = '#1540B1'
-const PSYCHE_WARM = '#FFE6CB'
+const CLAW_GREEN = '#22C55E'
+const CLAW_GREEN_LIGHT = '#4ADE80'
+const CLAW_GREEN_DEEP = '#16A34A'
 
-const nousTint = (pct: number) => `color-mix(in srgb, ${NOUS_BLUE} ${pct}%, #FFFFFF)`
-const nousTintTransparent = (pct: number) => `color-mix(in srgb, ${NOUS_BLUE} ${pct}%, transparent)`
+const clawTint = (pct: number) => `color-mix(in srgb, ${CLAW_GREEN} ${pct}%, #FFFFFF)`
+const clawTintTransparent = (pct: number) => `color-mix(in srgb, ${CLAW_GREEN} ${pct}%, transparent)`
 
 /**
- * Nous — canonical Hermes desktop identity. The palette keeps the current
- * glass geometry neutral, then lets the old bb/gui blue and psyche cream
- * return as accent seeds.
+ * Claw Agent — canonical ClawPump desktop identity (built on Hermes by Nous
+ * Research). Solana-green accents on glass neutrals in light mode, deep
+ * ClawPump green in dark mode.
  */
 export const nousTheme: DesktopTheme = {
   name: 'nous',
-  label: 'Nous',
-  description: 'Glass neutrals with Nous blue accents',
+  label: 'Claw Agent',
+  description: 'ClawPump green on glass neutrals',
   colors: {
-    background: '#F8FAFF',
-    foreground: '#17171A',
+    background: '#F6FBF8',
+    foreground: '#13201A',
     card: '#FFFFFF',
-    cardForeground: '#17171A',
-    muted: nousTint(5),
-    mutedForeground: '#666678',
+    cardForeground: '#13201A',
+    muted: clawTint(5),
+    mutedForeground: '#5B6B62',
     popover: '#FFFFFF',
-    popoverForeground: '#17171A',
-    primary: NOUS_BLUE,
-    primaryForeground: '#FCFCFC',
-    secondary: nousTint(7),
-    secondaryForeground: '#242432',
-    accent: nousTint(10),
-    accentForeground: '#202030',
-    border: nousTintTransparent(22),
-    input: nousTintTransparent(30),
-    ring: NOUS_BLUE,
-    midground: NOUS_BLUE,
-    composerRing: NOUS_BLUE,
+    popoverForeground: '#13201A',
+    primary: CLAW_GREEN,
+    primaryForeground: '#FCFFFD',
+    secondary: clawTint(7),
+    secondaryForeground: '#1E2A24',
+    accent: clawTint(10),
+    accentForeground: '#1B2620',
+    border: clawTintTransparent(22),
+    input: clawTintTransparent(30),
+    ring: CLAW_GREEN,
+    midground: CLAW_GREEN,
+    composerRing: CLAW_GREEN,
     destructive: '#C72E4D',
     destructiveForeground: '#FFFFFF',
-    sidebarBackground: '#F3F7FF',
-    sidebarBorder: nousTintTransparent(18),
-    userBubble: nousTint(6),
-    userBubbleBorder: nousTintTransparent(24)
+    sidebarBackground: '#F1FAF4',
+    sidebarBorder: clawTintTransparent(18),
+    userBubble: clawTint(6),
+    userBubbleBorder: clawTintTransparent(24)
   },
   darkColors: {
-    background: '#0D2F86',
-    foreground: PSYCHE_WARM,
-    card: '#12378F',
-    cardForeground: PSYCHE_WARM,
-    muted: '#183F9A',
-    mutedForeground: '#B5C7F3',
-    popover: '#123A96',
-    popoverForeground: PSYCHE_WARM,
-    primary: PSYCHE_WARM,
-    primaryForeground: '#0D2F86',
-    secondary: '#1B45A4',
-    secondaryForeground: '#E0E8FF',
-    accent: PSYCHE_BLUE,
-    accentForeground: '#F0F4FF',
-    border: '#3158AD',
-    input: '#0B2566',
-    ring: PSYCHE_WARM,
-    midground: NOUS_BLUE,
-    composerRing: PSYCHE_WARM,
+    background: '#0B1F14',
+    foreground: '#DCFCE7',
+    card: '#0F2A1B',
+    cardForeground: '#DCFCE7',
+    muted: '#15301F',
+    mutedForeground: '#86B89C',
+    popover: '#0F2A1B',
+    popoverForeground: '#DCFCE7',
+    primary: CLAW_GREEN_LIGHT,
+    primaryForeground: '#06140C',
+    secondary: '#173B26',
+    secondaryForeground: '#D6F5E1',
+    accent: CLAW_GREEN_DEEP,
+    accentForeground: '#ECFDF3',
+    border: '#1E5236',
+    input: '#0A1B11',
+    ring: CLAW_GREEN_LIGHT,
+    midground: CLAW_GREEN,
+    composerRing: CLAW_GREEN_LIGHT,
     destructive: '#C0473A',
     destructiveForeground: '#FEF2F2',
-    sidebarBackground: '#09286F',
-    sidebarBorder: '#234A9C',
-    userBubble: '#143B91',
-    userBubbleBorder: '#3A63BD'
+    sidebarBackground: '#081A10',
+    sidebarBorder: '#1B4A30',
+    userBubble: '#143625',
+    userBubbleBorder: '#2E6B47'
   },
   typography: {
     fontSans: SYSTEM_SANS,
