@@ -2247,6 +2247,13 @@ def _replay_output_history() -> None:
         _OUTPUT_HISTORY_REPLAYING = False
 
 
+# Internal sentinel enqueued by the model picker to run the deterministic Pod
+# setup on the process_loop worker thread (see process_command). Not a
+# user-facing command; the leading slash makes process_loop route it to
+# process_command rather than treating it as agent chat input.
+_POD_SETUP_COMMAND = "/__clawpump_pod_setup__"
+
+
 def _cprint(text: str):
     """Print ANSI-colored text through prompt_toolkit's native renderer.
 
@@ -7010,14 +7017,20 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             _cprint("    (session only — add --global to persist)")
 
     def _run_pod_setup_flow(self) -> bool:
-        """Deterministic Pod setup from the TUI picker (mirrors the desktop modal).
+        """Deterministic Pod setup (mirrors the desktop modal): pick wallet →
+        amount → confirm → provision + fund on-chain → switch onto Pod.
 
-        Pick wallet → amount → confirm → provision + fund on-chain → switch onto
-        Pod. Returns True when it handled the selection (success OR user cancel);
-        False to fall back to the chat-guided flow (e.g. MCP unavailable). Runs on
-        the main thread via the existing curses/input helpers, which own the
-        terminal cleanly; the slow on-chain provision prints progress.
+        MUST be called on the process_loop worker thread (it is — via the
+        _POD_SETUP_COMMAND sentinel in process_command), NOT the prompt_toolkit
+        event-loop thread: it uses ``_prompt_text_input_modal`` (the app-native
+        modal billing uses) for every step, and the ~30-90s blocking provision
+        runs here without freezing the TUI (the event loop is the main thread).
+
+        Returns True when handled (success OR user cancel); False to fall back to
+        the chat-guided flow (no interactive app, MCP unavailable, no wallets).
         """
+        if not getattr(self, "_app", None):
+            return False  # non-interactive — let the chat-guided flow handle it
         try:
             from hermes_cli import distribution as _dist
         except Exception:
@@ -7031,73 +7044,114 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         if not wallets:
             return False
 
-        labels = [
-            f"{w.get('name') or (w.get('agent_id') or '')[:8]} — ${(w.get('usdc_balance') or 0):.2f} USDC"
+        # 1. Pick the funding wallet (default = most-funded, listed first).
+        wallet_choices = [
+            (
+                w["agent_id"],
+                f"{w.get('name') or (w.get('agent_id') or '')[:8]} — ${(w.get('usdc_balance') or 0):.2f} USDC",
+                "fund the pod from this wallet",
+            )
             for w in wallets
         ]
-        idx = self._run_curses_picker("Pay from which agent wallet?", labels, 0)
-        if idx is None or idx >= len(wallets):
-            _cprint("  Pod setup cancelled.")
+        wallet_choices.append(("cancel", "Cancel", "do nothing"))
+        raw = self._prompt_text_input_modal(
+            title="⚡ Set up Pod — pay from which agent wallet?",
+            detail="Pod is pay-as-you-go inference funded from a ClawPump wallet.",
+            choices=wallet_choices,
+        )
+        agent_id = self._normalize_slash_confirm_choice(raw, wallet_choices)
+        if not agent_id or agent_id == "cancel":
+            _cprint("  🟡 Pod setup cancelled.")
             return True
-        wallet = wallets[idx]
+        wallet = next((w for w in wallets if w["agent_id"] == agent_id), None)
+        if not wallet:
+            _cprint("  🟡 Pod setup cancelled.")
+            return True
 
-        amt_str = self._prompt_text_input("  Amount of USDC to fund the pod [5]: ")
-        if amt_str is None:
-            _cprint("  Pod setup cancelled.")
+        # 2. Amount — preset choices (a text modal off the main thread can't
+        #    reliably read free text, so offer presets bounded by the balance).
+        bal = wallet.get("usdc_balance") or 0
+        amount_choices = [
+            (str(a), f"${a:.0f} USDC", f"fund ${a:.0f}")
+            for a in (5, 10, 25, 50)
+            if a <= bal
+        ]
+        if not amount_choices:
+            # Balance under $5 — offer the whole balance (min 0.5) or cancel.
+            usable = round(max(bal, 0), 2)
+            if usable < 0.5:
+                _cprint(f"  🔴 Wallet only holds ${bal:.2f} USDC — fund it first.")
+                return True
+            amount_choices = [(str(usable), f"${usable:.2f} USDC (full balance)", "fund the balance")]
+        amount_choices.append(("cancel", "Cancel", "do nothing"))
+        raw = self._prompt_text_input_modal(
+            title=f"⚡ Fund amount  (wallet has ${bal:.2f} USDC)",
+            detail="The pod holds a prepaid USDC balance you draw down per request.",
+            choices=amount_choices,
+        )
+        amt_choice = self._normalize_slash_confirm_choice(raw, amount_choices)
+        if not amt_choice or amt_choice == "cancel":
+            _cprint("  🟡 Pod setup cancelled.")
             return True
-        amt_str = (amt_str or "").strip() or "5"
         try:
-            amount = float(amt_str)
+            amount = float(amt_choice)
             if amount <= 0:
                 raise ValueError
         except ValueError:
-            _cprint("  Invalid amount — Pod setup cancelled.")
+            _cprint("  🟡 Pod setup cancelled.")
             return True
 
-        bal = wallet.get("usdc_balance") or 0
-        if amount > bal:
-            _cprint(f"  ⚠ Wallet holds ${bal:.2f} USDC but you asked for ${amount:.2f}.")
-
-        confirm = self._run_curses_picker(
-            f"Fund ${amount:.2f} USDC from '{labels[idx]}' and use Pod? (on-chain spend)",
-            ["Yes — fund & use Pod", "Cancel"],
-            0,
+        # 3. Final confirm — the on-chain spend.
+        confirm_choices = [
+            ("pay", f"Fund ${amount:.2f} & use Pod", "submit the on-chain deposit"),
+            ("cancel", "Cancel", "do not spend"),
+        ]
+        raw = self._prompt_text_input_modal(
+            title="⚡ Confirm Pod funding",
+            detail=f"Spend ${amount:.2f} USDC from '{wallet.get('name') or agent_id[:8]}' on-chain. Irreversible.",
+            choices=confirm_choices,
         )
-        if confirm != 0:
-            _cprint("  Pod setup cancelled.")
+        if self._normalize_slash_confirm_choice(raw, confirm_choices) != "pay":
+            _cprint("  🟡 Pod setup cancelled. No funds moved.")
             return True
 
-        _cprint(f"  Provisioning Pod and funding ${amount:.2f} USDC on-chain… (~30-60s)")
+        # 4. Provision + fund (blocking ~30-90s — fine on this worker thread).
+        _cprint(f"  ⚡ Provisioning Pod and funding ${amount:.2f} USDC on-chain… (~30-60s)")
         try:
             res = _dist.usepod_provision_call(wallet["agent_id"], amount)
         except Exception as exc:
-            _cprint(f"  ✗ Pod setup failed: {exc}")
+            _cprint(f"  🔴 Pod setup failed: {exc}")
             return True
 
         api_token = res.get("api_token") or ""
         if not api_token:
-            _cprint(f"  ✗ Pod setup failed: {res.get('funding_error') or 'no token returned'}")
+            _cprint(f"  🔴 Pod setup failed: {res.get('funding_error') or 'no token returned'}")
             return True
 
+        # 5. Persist + switch. Persist FIRST so a later switch error never loses
+        #    a token the user already paid for; guard the switch separately so it
+        #    can't bubble to the picker handler and double-handle as chat.
         _dist.persist_usepod_credentials(api_token, res.get("deposit_code") or "")
-        model, provider, base_url = _dist.usepod_pod_switch_target(
-            api_token, getattr(self, "model", "") or ""
-        )
-        self._pending_pod_activation = {
-            "model": model,
-            "provider": provider,
-            "base_url": base_url,
-            "api_key": api_token,
-        }
         try:
+            model, _provider, base_url = _dist.usepod_pod_switch_target(
+                api_token, getattr(self, "model", "") or ""
+            )
+            self._pending_pod_activation = {
+                "model": model,
+                "provider": "usepod",
+                "base_url": base_url,
+                "api_key": api_token,
+            }
             self._activate_pending_pod()
         except Exception:
-            logger.debug("Pod setup: activate_pending_pod failed", exc_info=True)
+            logger.debug("Pod setup: switch failed (token persisted)", exc_info=True)
+            _cprint("  ✓ Pod funded and saved. Re-open the model picker to select a Pod model.")
+            return True
 
         if res.get("funding_error"):
             _cprint(
                 f"  ✓ Pod created and selected ({model}). "
-                f"⚠ funding issue: {res['funding_error']} — top up with the Pod menu."
+                f"⚠ funding issue: {res['funding_error']} — top it up and retry."
             )
         else:
             _cprint(f"  ✓ Pod ready — funded ${amount:.2f} USDC, now using {model}.")
@@ -7121,25 +7175,16 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             # failing switch. Hand the agent the configure instruction.
             if provider_data.get("clawpump_setup"):
                 self._close_model_picker()
-                # Deterministic terminal flow first (pick wallet → amount →
-                # confirm → provision), mirroring the desktop modal. Falls back
-                # to the chat-guided flow if it can't run (MCP unconfigured, off
-                # the main thread, etc.).
-                try:
-                    if self._run_pod_setup_flow():
-                        return
-                except Exception:
-                    logger.debug("Pod setup flow failed; falling back to chat", exc_info=True)
-                try:
-                    from hermes_cli.distribution import usepod_setup_request_message
-                    _msg = usepod_setup_request_message()
-                except Exception:
-                    _msg = (
-                        "Help me set up the Pod (UsePod) provider step by step and "
-                        "fund it from my ClawPump wallet."
-                    )
+                # Run the deterministic Pod setup (pick wallet → amount → confirm
+                # → provision) on the process_loop background thread, NOT here:
+                # this handler runs on the prompt_toolkit main/event-loop thread,
+                # where the interactive curses pickers + the ~30-90s on-chain
+                # provision would freeze the TUI. Enqueuing the internal command
+                # routes it through process_command() on the worker thread — the
+                # same path the /billing interactive flow uses safely. The flow
+                # itself falls back to the chat-guided message if it can't run.
                 if hasattr(self, "_pending_input"):
-                    self._pending_input.put(_msg)
+                    self._pending_input.put(_POD_SETUP_COMMAND)
                 return
             # Use the curated model list from list_authenticated_providers()
             # (same lists as `hermes model` and gateway pickers).
@@ -7591,6 +7636,29 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         # Lowercase only for dispatch matching; preserve original case for arguments
         cmd_lower = command.lower().strip()
         cmd_original = command.strip()
+
+        # Internal: deterministic Pod setup, enqueued by the model picker so it
+        # runs HERE on the process_loop worker thread (not the keybinding/event
+        # thread). On this thread the curses pickers do direct terminal I/O and
+        # the slow on-chain provision doesn't block the TUI event loop.
+        if cmd_original == _POD_SETUP_COMMAND:
+            try:
+                if self._run_pod_setup_flow():
+                    return True
+            except Exception:
+                logger.debug("Pod setup flow failed; falling back to chat", exc_info=True)
+            # Couldn't run deterministically — hand the agent the guided message.
+            try:
+                from hermes_cli.distribution import usepod_setup_request_message
+                _msg = usepod_setup_request_message()
+            except Exception:
+                _msg = (
+                    "Help me set up the Pod (UsePod) provider step by step and "
+                    "fund it from my ClawPump wallet."
+                )
+            if hasattr(self, "_pending_input"):
+                self._pending_input.put(_msg)
+            return True
 
         # Resolve aliases via central registry so adding an alias is a one-line
         # change in hermes_cli/commands.py instead of touching every dispatch site.
@@ -14109,7 +14177,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                         continue
 
                     if not _file_drop and isinstance(user_input, str) and _looks_like_slash_command(user_input):
-                        _cprint(f"\n⚙️  {user_input}")
+                        # Internal sentinels (e.g. the Pod-setup hand-off from the
+                        # model picker) aren't user commands — don't echo them.
+                        if user_input != _POD_SETUP_COMMAND:
+                            _cprint(f"\n⚙️  {user_input}")
                         try:
                             if not self.process_command(user_input):
                                 self._should_exit = True

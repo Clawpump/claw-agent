@@ -517,7 +517,7 @@ def _clawpump_tool_struct(tool: str, arguments=None, *, timeout: float = 120):
     )
 
     _ensure_mcp_loop()
-    out = {"data": None, "error": None}
+    out = {"structured": None, "text": "", "error": None}
 
     async def _call():
         import asyncio as _asyncio
@@ -529,14 +529,10 @@ def _clawpump_tool_struct(tool: str, arguments=None, *, timeout: float = 120):
             if getattr(result, "isError", False):
                 out["error"] = text or "MCP tool returned an error"
                 return
+            out["text"] = text
             sc = getattr(result, "structuredContent", None)
             if isinstance(sc, dict) and sc:
-                out["data"] = sc
-            else:
-                try:
-                    out["data"] = _json.loads(text) if text else None
-                except Exception:
-                    out["data"] = text
+                out["structured"] = sc
         finally:
             await server.shutdown()
 
@@ -550,7 +546,10 @@ def _clawpump_tool_struct(tool: str, arguments=None, *, timeout: float = 120):
 
     if out["error"]:
         raise RuntimeError(out["error"])
-    return out["data"]
+    # Both channels: structuredContent (machine; real secrets) AND the text
+    # (human; may redact secrets). Callers that need a secret check structured
+    # first, then fall back to the text — never drop one silently.
+    return {"structured": out["structured"], "text": out["text"]}
 
 
 def usepod_fetch_wallets():
@@ -558,14 +557,14 @@ def usepod_fetch_wallets():
 
     Sorted by USDC balance (most-funded first) so the picker can default to it.
     """
-    summaries = _clawpump_tool_struct("get_wallet_summaries", {}, timeout=30)
+    summaries = _channel_payload(_clawpump_tool_struct("get_wallet_summaries", {}, timeout=30))
     if isinstance(summaries, dict):
         summaries = summaries.get("wallets") or summaries.get("summaries") or []
     rows = [w for w in (summaries or []) if isinstance(w, dict) and w.get("agent_id")]
 
     # Enrich with display names (summaries carry only the agent_id UUID).
     try:
-        agents = _clawpump_tool_struct("list_agents", {}, timeout=30)
+        agents = _channel_payload(_clawpump_tool_struct("list_agents", {}, timeout=30))
         if isinstance(agents, dict):
             agents = agents.get("agents") or []
         names = {a.get("id"): a.get("name") for a in (agents or []) if isinstance(a, dict)}
@@ -578,18 +577,57 @@ def usepod_fetch_wallets():
     return rows
 
 
+def _channel_payload(channels):
+    """Pick the usable object from a ``{structured, text}`` channel result:
+    structuredContent if present, else the parsed text JSON, else the raw."""
+    if not isinstance(channels, dict) or ("structured" not in channels and "text" not in channels):
+        return channels  # already a plain payload (back-compat)
+    sc = channels.get("structured")
+    if isinstance(sc, dict) and sc:
+        return sc
+    text = channels.get("text")
+    if isinstance(text, str) and text:
+        try:
+            import json as _json
+
+            return _json.loads(text)
+        except Exception:
+            return text
+    return None
+
+
 def usepod_provision_call(agent_id: str, amount: float) -> dict:
-    """Register + fund a Pod from ``agent_id``'s wallet. Returns the parsed dict
-    with the REAL api_token (read from structuredContent). Spends on-chain USDC."""
-    raw = _clawpump_tool_struct(
+    """Register + fund a Pod from ``agent_id``'s wallet. Spends on-chain USDC.
+
+    Returns the parsed result with the REAL api_token. The token lives in
+    ``structuredContent`` (the text channel redacts it), but we check BOTH —
+    structured first, then the text via the regex extractor — so a money-spent
+    provision never reports "no token" just because the channels were swapped.
+    """
+    channels = _clawpump_tool_struct(
         "usepod_provision",
         {"agent_id": agent_id, "amount": amount, "confirm_deposit": True},
         timeout=120,
     )
-    data = raw if isinstance(raw, dict) else {}
-    # Token may still arrive nested/escaped — the existing extractor handles it.
-    tok = usepod_provision_token("mcp_clawpump_usepod_provision", raw)
-    api_token = (tok[0] if tok else "") or str(data.get("api_token") or data.get("token") or "").strip()
+    data = _channel_payload(channels)
+    if not isinstance(data, dict):
+        data = {}
+
+    def _real(tok: str) -> str:
+        # The redacted placeholder ("<applied… hidden>") is truthy but useless —
+        # treat it as no-token so we never persist it as a working credential.
+        tok = (tok or "").strip()
+        return "" if (not tok or tok.startswith("<") or "applied" in tok.lower()) else tok
+
+    # 1. structuredContent dict, 2. its nested wrappers, 3. the raw text regex.
+    api_token = _real(str(data.get("api_token") or data.get("token") or ""))
+    if not api_token:
+        tok = usepod_provision_token("mcp_clawpump_usepod_provision", data)
+        api_token = _real(tok[0] if tok else "")
+    if not api_token and isinstance(channels, dict):
+        tok = usepod_provision_token("mcp_clawpump_usepod_provision", channels.get("text") or "")
+        api_token = _real(tok[0] if tok else "")
+
     return {
         "api_token": api_token,
         "deposit_code": str(data.get("deposit_code") or "").strip(),
