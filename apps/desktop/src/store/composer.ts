@@ -21,6 +21,13 @@ export const $composerDraft = atom('')
 export const $composerAttachments = atom<ComposerAttachment[]>([])
 export const $composerTerminalSelections = atom<Record<string, string>>({})
 
+// A one-shot prompt to drop into the main composer once it's ready. Set by
+// "send to chat" flows that navigate to a fresh chat (e.g. x402 "Use in chat",
+// wallet "Tokenize") — navigating + an immediate insert event races the
+// composer mount, so the composer drains this atom when it becomes ready
+// instead. Cleared on drain so it fires exactly once.
+export const $pendingChatPrompt = atom<string | null>(null)
+
 // Per-thread draft stash for the decoupled composer. Session lifecycle never
 // touches this — only ChatBar's scope swap reads/writes it. Text mirrors to
 // localStorage; attachments are memory-only (blobs, upload state).

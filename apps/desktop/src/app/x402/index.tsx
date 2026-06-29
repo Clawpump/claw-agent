@@ -7,9 +7,9 @@ import { Button } from '@/components/ui/button'
 import { writeClipboardText } from '@/components/ui/copy-button'
 import { Input } from '@/components/ui/input'
 import { Check, Copy, ExternalLink, Loader2, Search, Zap } from '@/lib/icons'
+import { $pendingChatPrompt } from '@/store/composer'
 import { notifyError } from '@/store/notifications'
 
-import { requestComposerInsert } from '../chat/composer/focus'
 import { NEW_CHAT_ROUTE } from '../routes'
 import type { SetStatusbarItemGroup } from '../shell/statusbar-controls'
 
@@ -50,8 +50,8 @@ export function X402View({ setStatusbarItemGroup: _setStatusbarItemGroup, ...pro
   }
 
   const useInChat = (r: X402Result) => {
+    $pendingChatPrompt.set(buildPrompt(r))
     navigate(NEW_CHAT_ROUTE)
-    requestComposerInsert(buildPrompt(r))
   }
 
   const copy = async (url: string) => {

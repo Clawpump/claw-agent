@@ -10,9 +10,9 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Input } from '@/components/ui/input'
 import { InlineNotice } from '@/components/notifications'
 import { Check, Copy, ExternalLink, Loader2, RefreshCw, Send } from '@/lib/icons'
+import { $pendingChatPrompt } from '@/store/composer'
 import { notify } from '@/store/notifications'
 
-import { requestComposerInsert } from '../chat/composer/focus'
 import { NEW_CHAT_ROUTE } from '../routes'
 import type { SetStatusbarItemGroup } from '../shell/statusbar-controls'
 
@@ -140,10 +140,10 @@ export function WalletView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
   const rows = wallets.data?.wallets ?? []
 
   const tokenize = (w: PodWallet) => {
-    navigate(NEW_CHAT_ROUTE)
-    requestComposerInsert(
+    $pendingChatPrompt.set(
       `Launch a ClawPump token for my agent "${w.name || w.agent_id}" (agent_id ${w.agent_id}). Ask me for the ticker/symbol and any details you need, then launch it.`
     )
+    navigate(NEW_CHAT_ROUTE)
   }
 
   return (

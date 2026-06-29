@@ -27,6 +27,7 @@ import { triggerHaptic } from '@/lib/haptics'
 import { cn } from '@/lib/utils'
 import {
   $composerAttachments,
+  $pendingChatPrompt,
   clearComposerAttachments,
   clearSessionDraft,
   type ComposerAttachment,
@@ -356,6 +357,16 @@ export function ChatBar({
         appendExternalText(text, mode)
       }
     })
+
+    // Drain a one-shot prompt left by a "send to chat" flow that navigated here
+    // (x402 "Use in chat", wallet "Tokenize"). Its insert event would have
+    // raced this composer's mount, so it parks the text in $pendingChatPrompt
+    // and we drop it in now that we're ready. Cleared so it fires exactly once.
+    const pending = $pendingChatPrompt.get()
+    if (pending) {
+      $pendingChatPrompt.set(null)
+      appendExternalText(pending, 'block')
+    }
 
     return () => {
       offFocus()
