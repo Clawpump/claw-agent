@@ -16,7 +16,10 @@ export function PodCredits({ provider }: { provider: string }) {
     queryFn: getPodStatus,
     enabled: isPod,
     staleTime: 30_000,
-    refetchInterval: 60_000
+    refetchInterval: 60_000,
+    // Keep the last result while a refetch is in flight so the credits readout
+    // never flickers from "$0.94" back to a bare "Pod".
+    placeholderData: prev => prev
   })
 
   if (!isPod || !status.data?.connected) {
@@ -25,9 +28,12 @@ export function PodCredits({ provider }: { provider: string }) {
 
   const bal = status.data.balance_usdc
   const low = bal != null && bal < 0.5
+  // bal is null only before the very first successful fetch (the backend caches
+  // the last good value thereafter) — show a loading dash, not a bare "Pod".
+  const text = bal != null ? `$${bal.toFixed(2)}` : '$…'
 
   return (
-    <Tip label={bal != null ? `Pod credits: $${bal.toFixed(4)} USDC` : 'Pod connected'}>
+    <Tip label={bal != null ? `Pod credits: $${bal.toFixed(4)} USDC` : 'Pod connected — fetching balance…'}>
       <span
         className={`inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[0.6875rem] font-medium ${
           low
@@ -36,7 +42,7 @@ export function PodCredits({ provider }: { provider: string }) {
         }`}
       >
         <img alt="" className="size-3 rounded-sm" src="/claw-mark.png" />
-        {bal != null ? `$${bal.toFixed(2)}` : 'Pod'}
+        {text}
       </span>
     </Tip>
   )

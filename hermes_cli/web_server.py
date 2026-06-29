@@ -12303,17 +12303,50 @@ async def post_pod_provision(body: PodProvisionBody, profile: Optional[str] = No
         return {"ok": False, "error": str(exc)}
 
 
+# Last successfully-fetched Pod balance, keyed by token. A transient probe
+# failure (Cloudflare hiccup / timeout) then falls back to the last good value
+# so the UI never flickers from "$0.96" back to a bare "Pod". {token: usdc}.
+_pod_balance_cache: Dict[str, float] = {}
+
+
+def _fetch_pod_balance(token: str) -> Optional[float]:
+    """Fetch the pod's USDC balance (UI units). Retries once; None on failure."""
+    from hermes_cli.auth import USEPOD_API_BASE
+    from providers.base import _profile_user_agent
+
+    url = f"{USEPOD_API_BASE}/proxy/{token}/balance"
+    for attempt in range(2):
+        try:
+            # UsePod sits behind Cloudflare, which 403s ("error 1010") a bare
+            # urllib request — send a browser-ish UA + the bearer token, matching
+            # the provider's own fetch_models. The token also lives in the path.
+            req = urllib.request.Request(url, method="GET")
+            req.add_header("User-Agent", _profile_user_agent())
+            req.add_header("Authorization", f"Bearer {token}")
+            req.add_header("Accept", "application/json")
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            micro = data.get("usdc_balance")
+            if micro is not None:
+                return round(float(micro) / 1_000_000.0, 4)
+            return None
+        except Exception:
+            if attempt == 0:
+                continue
+            return None
+    return None
+
+
 @app.get("/api/clawpump/pod/status")
 def get_pod_status():
     """Whether a UsePod Pod is configured + its remaining USDC balance.
 
     Lets the desktop show Pod as "Connected" (with balance) instead of "Set up"
     once provisioned. Reads USEPOD_API_KEY from ~/.hermes/.env (never returns the
-    token) and best-effort fetches the pod's balance. Sync def — quick file read
-    + one short HTTP GET.
+    token) and best-effort fetches the pod's balance — falling back to the last
+    cached value on a transient failure so the credits readout stays stable.
     """
     from hermes_cli.config import get_env_value
-    from hermes_cli.auth import USEPOD_API_BASE
 
     token = (get_env_value("USEPOD_API_KEY") or "").strip()
     # Empty, or the redacted placeholder from the old token-handling bug, both
@@ -12321,25 +12354,12 @@ def get_pod_status():
     if not token or token.startswith("<") or "applied" in token.lower():
         return {"connected": False}
 
-    balance_usdc = None
-    try:
-        # UsePod sits behind Cloudflare, which 403s ("error 1010") a bare urllib
-        # request — send a browser-ish UA + the bearer token, matching the
-        # provider's own fetch_models. The token also lives in the URL path.
-        from providers.base import _profile_user_agent
-
-        url = f"{USEPOD_API_BASE}/proxy/{token}/balance"
-        req = urllib.request.Request(url, method="GET")
-        req.add_header("User-Agent", _profile_user_agent())
-        req.add_header("Authorization", f"Bearer {token}")
-        req.add_header("Accept", "application/json")
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        micro = data.get("usdc_balance")
-        if micro is not None:
-            balance_usdc = round(float(micro) / 1_000_000.0, 4)
-    except Exception:
-        pass  # token is set but the balance probe failed — still "connected"
+    balance_usdc = _fetch_pod_balance(token)
+    if balance_usdc is not None:
+        _pod_balance_cache[token] = balance_usdc
+    else:
+        # Probe failed this time — show the last known balance if we have one.
+        balance_usdc = _pod_balance_cache.get(token)
 
     return {"connected": True, "balance_usdc": balance_usdc}
 
