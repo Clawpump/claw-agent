@@ -1208,6 +1208,19 @@ function Install-Repository {
                 # users hit on update. Pin autocrlf=false so the dirt is never
                 # created in the first place.
                 git -c windows.appendAtomically=false config core.autocrlf false 2>$null
+                # Re-point a pre-existing checkout at the ClawPump fork. Anyone
+                # who installed upstream Hermes has origin=NousResearch here;
+                # without this the update pulls upstream (none of the ClawPump
+                # features) into the install. Force origin to the fork; the
+                # diverged history means the update below hard-resets onto it.
+                $repoRepointed = $false
+                $currentOrigin = (git -c windows.appendAtomically=false remote get-url origin 2>$null) -join ""
+                if ($currentOrigin -notmatch "(?i)clawpump/claw-agent") {
+                    Write-Warn "Re-pointing origin to the ClawPump fork (was: $currentOrigin)."
+                    git -c windows.appendAtomically=false remote set-url origin $RepoUrlHttps 2>$null
+                    if ($LASTEXITCODE -ne 0) { git -c windows.appendAtomically=false remote add origin $RepoUrlHttps 2>$null }
+                    $repoRepointed = $true
+                }
                 # Preserve any real local changes before the checkout instead of
                 # discarding them with `reset --hard HEAD`. The old hard reset
                 # silently destroyed agent-edited source on managed clones (the
@@ -1254,8 +1267,16 @@ function Install-Repository {
                 } else {
                     git -c windows.appendAtomically=false checkout $Branch
                     if ($LASTEXITCODE -ne 0) { throw "git checkout $Branch failed (exit $LASTEXITCODE)" }
-                    git -c windows.appendAtomically=false pull --ff-only origin $Branch
-                    if ($LASTEXITCODE -ne 0) { throw "git pull failed (exit $LASTEXITCODE)" }
+                    if ($repoRepointed) {
+                        # Upstream -> fork is a diverged history; fast-forward is
+                        # impossible. Hard-reset the branch onto the fork.
+                        Write-Info "Resetting $Branch to the ClawPump fork (origin/$Branch)..."
+                        git -c windows.appendAtomically=false reset --hard "origin/$Branch"
+                        if ($LASTEXITCODE -ne 0) { throw "git reset --hard origin/$Branch failed (exit $LASTEXITCODE)" }
+                    } else {
+                        git -c windows.appendAtomically=false pull --ff-only origin $Branch
+                        if ($LASTEXITCODE -ne 0) { throw "git pull failed (exit $LASTEXITCODE)" }
+                    }
                 }
 
                 if ($autostashRef) {
@@ -1266,7 +1287,9 @@ function Install-Repository {
                     # bootstrap run the installer without a usable console -- in
                     # those cases Read-Host would hang or return empty, so we
                     # skip the prompt and just restore (the safe default).
-                    $restoreNow = $true
+                    # Don't replay upstream-Hermes local edits onto the fork —
+                    # they target different code and would only conflict.
+                    $restoreNow = -not $repoRepointed
                     $hasConsole = $false
                     try {
                         $hasConsole = (
