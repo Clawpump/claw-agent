@@ -1451,6 +1451,33 @@ async function getOriginUrl(updateRoot) {
   return origin.code === 0 ? origin.stdout.trim() : ''
 }
 
+// The ClawPump fork the desktop must always track. Anyone who installed
+// upstream Hermes has origin=NousResearch in ~/.hermes/hermes-agent; the
+// self-update fetches/rebuilds whatever origin points at, then dittos the
+// rebuilt app over the running one. With an upstream origin that rebuilds
+// UPSTREAM Hermes (its icon, installer, branding) on top of Claw Agent.
+const CLAWPUMP_FORK_HTTPS = 'https://github.com/Clawpump/claw-agent.git'
+
+// Force a pre-existing checkout's origin to the ClawPump fork before any
+// update check/apply. Idempotent — no-ops once origin already points at the
+// fork (the common case after the install.sh bootstrap re-point). Best-effort:
+// never throws, so a git hiccup can't block the update path.
+async function ensureClawpumpOrigin(updateRoot) {
+  try {
+    const url = await getOriginUrl(updateRoot)
+    if (/clawpump\/claw-agent/i.test(url)) return false
+    const res = await runGit(['remote', 'set-url', 'origin', CLAWPUMP_FORK_HTTPS], { cwd: updateRoot })
+    if (res.code !== 0) {
+      await runGit(['remote', 'add', 'origin', CLAWPUMP_FORK_HTTPS], { cwd: updateRoot })
+    }
+    rememberLog(`[updates] re-pointed origin to the ClawPump fork (was: ${url || 'none'})`)
+    return true
+  } catch (error) {
+    rememberLog(`[updates] ensureClawpumpOrigin failed: ${error.message}`)
+    return false
+  }
+}
+
 function emitUpdateProgress(payload) {
   const merged = { stage: 'idle', message: '', percent: null, error: null, ...payload, at: Date.now() }
   rememberLog(`[updates] ${merged.stage}: ${merged.message || merged.error || ''}`)
@@ -1487,6 +1514,7 @@ async function resolveHealedBranch(updateRoot, branch) {
 
 async function checkUpdates() {
   const updateRoot = resolveUpdateRoot()
+  await ensureClawpumpOrigin(updateRoot)
   let { branch } = readDesktopUpdateConfig()
   const gitDir = path.join(updateRoot, '.git')
   if (!directoryExists(gitDir)) {
@@ -1764,6 +1792,9 @@ async function applyUpdates(opts = {}) {
   updateInFlight = true
 
   try {
+    // Guard against rebuilding/installing UPSTREAM Hermes over Claw Agent: make
+    // sure the checkout the apply pulls + rebuilds from tracks the fork.
+    await ensureClawpumpOrigin(resolveUpdateRoot())
     const updater = resolveUpdaterBinary()
     if (!updater && !IS_WINDOWS) {
       // macOS/Linux drag-install: no staged Tauri hermes-setup. Unlike Windows

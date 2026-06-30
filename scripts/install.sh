@@ -1804,6 +1804,30 @@ SOUL_EOF
             fi
         fi
     fi
+
+    # Seed the ClawPump MCP (133 ClawPump tools: wallet, trading, marketplace,
+    # perps, token launch) so it's connected out of the box instead of needing
+    # a manual `hermes clawpump setup`. The remote entry is OAuth-deferred — the
+    # sign-in browser opens on first connect, not here — so this only writes
+    # config. Idempotent (skips if already configured) and best-effort: a
+    # failure here must never fail the install.
+    if [ -x "$INSTALL_DIR/venv/bin/python" ]; then
+        log_info "Ensuring the ClawPump MCP is connected..."
+        if "$INSTALL_DIR/venv/bin/python" - >/dev/null 2>&1 <<'PY'
+import sys
+try:
+    from hermes_cli.clawpump_cli import _configured_entry
+    from hermes_cli.mcp_picker import install_by_name
+    sys.exit(0 if _configured_entry() else install_by_name("clawpump"))
+except Exception:
+    sys.exit(1)
+PY
+        then
+            log_success "ClawPump MCP connected — sign in on first launch"
+        else
+            log_info "ClawPump MCP seed deferred (run 'hermes clawpump setup' to connect)"
+        fi
+    fi
 }
 
 find_system_browser() {
