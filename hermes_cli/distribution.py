@@ -488,7 +488,15 @@ def _clawpump_mcp_config():
         from hermes_cli.mcp_config import _get_mcp_servers, _resolve_mcp_server_config
 
         servers = _get_mcp_servers()
-        name = next((n for n in ("clawpump", "clawpump-stdio") if n in servers), None)
+        # Match the dashboard's _clawpump_mcp(): known names first, then any
+        # clawpump* entry (e.g. clawpump-agents), so every ClawPump MCP variant
+        # the agent can load is also resolvable here.
+        name = next(
+            (n for n in ("clawpump", "clawpump-stdio", "clawpump-agents") if n in servers),
+            None,
+        )
+        if not name:
+            name = next((n for n in servers if n.startswith("clawpump")), None)
         if not name:
             return (None, None)
         return (name, _resolve_mcp_server_config(servers[name]))

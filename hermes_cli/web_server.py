@@ -12067,11 +12067,25 @@ async def set_dashboard_theme(body: ThemeSetBody):
 # in the vetted catalog (the font's webfont URL is injected as a <link>,
 # so we never accept an arbitrary user-supplied id/URL here).
 def _clawpump_mcp():
-    """Return (server_name, config) for the configured ClawPump MCP, else (None, None)."""
+    """Return (server_name, config) for the configured ClawPump MCP, else (None, None).
+
+    The chat agent loads EVERY configured MCP server, so the ClawPump tools work
+    in chat under whatever entry name the user installed — ``clawpump`` (remote
+    OAuth), ``clawpump-stdio``, or ``clawpump-agents`` (``npx @clawpump/agents``).
+    The dashboard must recognise the SAME entry, otherwise chat works while every
+    sidebar MCP page (wallet / x402 / pod / mail) reports "not configured". Try
+    the known names in preference order, then fall back to any ``clawpump*``
+    server so a future/renamed entry still resolves.
+    """
     from hermes_cli.mcp_config import _get_mcp_servers
 
     servers = _get_mcp_servers()
-    name = next((n for n in ("clawpump", "clawpump-stdio") if n in servers), None)
+    name = next(
+        (n for n in ("clawpump", "clawpump-stdio", "clawpump-agents") if n in servers),
+        None,
+    )
+    if name is None:
+        name = next((n for n in servers if n.startswith("clawpump")), None)
     return (name, servers[name]) if name else (None, None)
 
 
