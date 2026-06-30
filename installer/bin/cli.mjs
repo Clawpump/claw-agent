@@ -133,6 +133,24 @@ function main() {
   run(uv, ["pip", "install", "--python", venvExe("python"), "-e", `${AGENT_DIR}[${EXTRA}]`]);
   ok("dependencies installed");
 
+  // 3b) Seed the ClawPump MCP (133 tools — wallet, trading, marketplace) so
+  // it's connected out of the box. Idempotent (skips if already configured)
+  // and best-effort — a failure here must never abort the install. The remote
+  // entry is OAuth-deferred, so the sign-in browser opens on first connect.
+  try {
+    const seed = [
+      "import sys",
+      "try:",
+      "    from hermes_cli.clawpump_cli import _configured_entry",
+      "    from hermes_cli.mcp_picker import install_by_name",
+      "    sys.exit(0 if _configured_entry() else install_by_name('clawpump'))",
+      "except Exception:",
+      "    sys.exit(1)",
+    ].join("\n");
+    const r = spawnSync(venvExe("python"), ["-c", seed], { stdio: "ignore" });
+    if (r.status === 0) ok("ClawPump MCP connected — sign in on first launch");
+  } catch { /* best-effort: connect manually with `claw clawpump setup` */ }
+
   // 4) launcher
   const onPath = makeLauncher();
   ok(`launcher → ${path.join(BIN_DIR, "claw")}`);
