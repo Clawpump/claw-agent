@@ -771,6 +771,25 @@ export function getPodStatus(): Promise<{ connected: boolean; balance_usdc?: num
   })
 }
 
+export interface McpServer {
+  name: string
+  transport: string
+  url?: string | null
+  command?: string | null
+  enabled: boolean
+  /** OAuth servers: true/false once tokens are checked; null when not applicable. */
+  authenticated?: boolean | null
+  tools?: string[] | null
+}
+
+/** Configured MCP servers + their connection state (for the sidebar MCP page). */
+export function getMcpServers(): Promise<{ servers: McpServer[] }> {
+  return window.hermesDesktop.api<{ servers: McpServer[] }>({
+    ...profileScoped(),
+    path: '/api/mcp/servers'
+  })
+}
+
 /** ClawPump agent wallets (id + name + USDC balance) for the Pod funding picker. */
 export function getPodWallets(): Promise<{ ok: boolean; wallets: PodWallet[]; error?: string }> {
   return window.hermesDesktop.api<{ ok: boolean; wallets: PodWallet[]; error?: string }>({

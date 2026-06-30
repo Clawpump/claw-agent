@@ -7983,6 +7983,24 @@ def _redact_mcp_env(env: Dict[str, Any]) -> Dict[str, str]:
     return out
 
 
+def _mcp_server_authenticated(name: str, cfg: Dict[str, Any]) -> Optional[bool]:
+    """True/False if this server uses OAuth and we can tell whether tokens are
+    on disk; None when auth state isn't applicable/known (stdio key servers).
+
+    Lets the GUI render a real "Connected" vs "Connect" state for the ClawPump
+    MCP instead of guessing — the OAuth token is shared on disk, so the sidebar
+    reflects the same authenticated session the chat agent uses.
+    """
+    is_oauth = cfg.get("auth") == "oauth" or (cfg.get("url") and not cfg.get("command"))
+    if not is_oauth:
+        return None
+    try:
+        from hermes_cli.mcp_config import _oauth_tokens_present
+        return bool(_oauth_tokens_present(name))
+    except Exception:
+        return None
+
+
 def _mcp_server_summary(name: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
     transport = "http" if cfg.get("url") else ("stdio" if cfg.get("command") else "unknown")
     return {
@@ -7994,6 +8012,7 @@ def _mcp_server_summary(name: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
         "env": _redact_mcp_env(cfg.get("env") or {}),
         "auth": cfg.get("auth"),
         "enabled": cfg.get("enabled", True) is not False,
+        "authenticated": _mcp_server_authenticated(name, cfg),
         # Tool selection: list of enabled tool names, or None = all.
         "tools": cfg.get("tools"),
     }

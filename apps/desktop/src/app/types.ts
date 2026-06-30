@@ -125,6 +125,7 @@ export type CommandDispatchResponse =
 export type SidebarNavId =
   | 'artifacts'
   | 'command-center'
+  | 'mcp'
   | 'messaging'
   | 'new-session'
   | 'settings'

@@ -10,6 +10,7 @@ export const PROFILES_ROUTE = '/profiles'
 export const AGENTS_ROUTE = '/agents'
 export const WALLET_ROUTE = '/wallet'
 export const X402_ROUTE = '/x402'
+export const MCP_ROUTE = '/mcp'
 
 export type AppView =
   | 'agents'
@@ -17,6 +18,7 @@ export type AppView =
   | 'chat'
   | 'command-center'
   | 'cron'
+  | 'mcp'
   | 'messaging'
   | 'profiles'
   | 'settings'
@@ -29,6 +31,7 @@ export type AppRouteId =
   | 'artifacts'
   | 'command-center'
   | 'cron'
+  | 'mcp'
   | 'messaging'
   | 'new'
   | 'profiles'
@@ -54,7 +57,8 @@ export const APP_ROUTES = [
   { id: 'profiles', path: PROFILES_ROUTE, view: 'profiles' },
   { id: 'agents', path: AGENTS_ROUTE, view: 'agents' },
   { id: 'wallet', path: WALLET_ROUTE, view: 'wallet' },
-  { id: 'x402', path: X402_ROUTE, view: 'x402' }
+  { id: 'x402', path: X402_ROUTE, view: 'x402' },
+  { id: 'mcp', path: MCP_ROUTE, view: 'mcp' }
 ] as const satisfies readonly AppRoute[]
 
 const APP_VIEW_BY_PATH = new Map<string, AppView>(APP_ROUTES.map(route => [route.path, route.view]))
