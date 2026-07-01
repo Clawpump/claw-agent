@@ -776,8 +776,9 @@ export interface McpServer {
   transport: string
   url?: string | null
   command?: string | null
+  auth?: string | null
   enabled: boolean
-  /** OAuth servers: true/false once tokens are checked; null when not applicable. */
+  /** true/false when backend can check credentials; null when not applicable/unknown. */
   authenticated?: boolean | null
   tools?: string[] | null
 }

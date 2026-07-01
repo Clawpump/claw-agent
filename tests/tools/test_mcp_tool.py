@@ -81,6 +81,119 @@ class TestLoadMCPConfig:
             result = _load_mcp_config()
             assert result == {}
 
+    def test_clawpump_stdio_backfills_api_key_for_legacy_config(self):
+        """Old ClawPump stdio installs saved the key but lacked env wiring."""
+        servers = {
+            "clawpump-stdio": {
+                "command": "npx",
+                "args": ["-y", "@clawpump/agents"],
+            },
+            "other-stdio": {
+                "command": "npx",
+                "args": ["-y", "other-mcp"],
+            },
+        }
+        with (
+            patch("hermes_cli.config.load_config", return_value={"mcp_servers": servers}),
+            patch("hermes_cli.env_loader.load_hermes_dotenv", lambda: None),
+            patch.dict(
+                "os.environ",
+                {"CLAWPUMP_API_KEY": "cpk_legacy", "PATH": "/usr/bin"},
+                clear=True,
+            ),
+        ):
+            from tools.mcp_tool import _load_mcp_config
+
+            result = _load_mcp_config()
+
+        assert result["clawpump-stdio"]["env"]["CLAWPUMP_API_KEY"] == "cpk_legacy"
+        assert "env" not in result["other-stdio"]
+
+    def test_clawpump_stdio_keeps_explicit_api_key_env(self):
+        servers = {
+            "clawpump-stdio": {
+                "command": "npx",
+                "args": ["-y", "@clawpump/agents"],
+                "env": {"CLAWPUMP_API_KEY": "cpk_inline"},
+            },
+        }
+        with (
+            patch("hermes_cli.config.load_config", return_value={"mcp_servers": servers}),
+            patch("hermes_cli.env_loader.load_hermes_dotenv", lambda: None),
+            patch.dict(
+                "os.environ",
+                {"CLAWPUMP_API_KEY": "cpk_env", "PATH": "/usr/bin"},
+                clear=True,
+            ),
+        ):
+            from tools.mcp_tool import _load_mcp_config
+
+            result = _load_mcp_config()
+
+        assert result["clawpump-stdio"]["env"]["CLAWPUMP_API_KEY"] == "cpk_inline"
+
+    def test_clawpump_stdio_uses_scoped_secret_when_multiplexing(self):
+        from agent.secret_scope import (
+            reset_secret_scope,
+            set_multiplex_active,
+            set_secret_scope,
+        )
+
+        servers = {
+            "clawpump-stdio": {
+                "command": "npx",
+                "args": ["-y", "@clawpump/agents"],
+            },
+        }
+        set_multiplex_active(True)
+        token = set_secret_scope({"CLAWPUMP_API_KEY": "cpk_scoped"})
+        try:
+            with (
+                patch("hermes_cli.config.load_config", return_value={"mcp_servers": servers}),
+                patch("hermes_cli.env_loader.load_hermes_dotenv", lambda: None),
+                patch.dict(
+                    "os.environ",
+                    {"CLAWPUMP_API_KEY": "cpk_wrong_profile", "PATH": "/usr/bin"},
+                    clear=True,
+                ),
+            ):
+                from tools.mcp_tool import _load_mcp_config
+
+                result = _load_mcp_config()
+        finally:
+            reset_secret_scope(token)
+            set_multiplex_active(False)
+
+        assert result["clawpump-stdio"]["env"]["CLAWPUMP_API_KEY"] == "cpk_scoped"
+
+    def test_clawpump_stdio_does_not_backfill_unscoped_multiplex_env(self):
+        from agent.secret_scope import set_multiplex_active
+
+        servers = {
+            "clawpump-stdio": {
+                "command": "npx",
+                "args": ["-y", "@clawpump/agents"],
+            },
+        }
+        set_multiplex_active(True)
+        try:
+            with (
+                patch("hermes_cli.config.load_config", return_value={"mcp_servers": servers}),
+                patch("hermes_cli.env_loader.load_hermes_dotenv", lambda: None),
+                patch.dict(
+                    "os.environ",
+                    {"CLAWPUMP_API_KEY": "cpk_wrong_profile", "PATH": "/usr/bin"},
+                    clear=True,
+                ),
+            ):
+                from tools.mcp_tool import _load_mcp_config
+
+                result = _load_mcp_config()
+        finally:
+            set_multiplex_active(False)
+
+        assert "env" not in result["clawpump-stdio"]
+
 
 class TestMCPStatus:
     def test_status_distinguishes_configured_connecting_failed_and_disabled(

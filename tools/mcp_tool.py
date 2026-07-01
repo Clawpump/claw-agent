@@ -2995,6 +2995,73 @@ def _interrupted_call_result() -> str:
 # Config loading
 # ---------------------------------------------------------------------------
 
+_CLAWPUMP_MCP_NAMES = {"clawpump", "clawpump-stdio", "clawpump-agents"}
+
+
+def _is_clawpump_stdio_mcp(name: str, cfg: dict) -> bool:
+    return (
+        (name in _CLAWPUMP_MCP_NAMES or name.startswith("clawpump"))
+        and bool(cfg.get("command"))
+        and not cfg.get("url")
+    )
+
+
+def _usable_secret_value(value) -> bool:
+    text = str(value or "").strip()
+    return bool(text and "${" not in text)
+
+
+def _clawpump_api_key_for_stdio_env() -> str:
+    try:
+        from agent.secret_scope import get_secret, is_multiplex_active
+
+        key = (get_secret("CLAWPUMP_API_KEY", "") or "").strip()
+        if key:
+            return key
+        if is_multiplex_active():
+            return ""
+    except Exception:
+        try:
+            from agent.secret_scope import is_multiplex_active
+
+            if is_multiplex_active():
+                return ""
+        except Exception:
+            pass
+
+    try:
+        from hermes_cli.config import get_env_value
+
+        return (get_env_value("CLAWPUMP_API_KEY") or "").strip()
+    except Exception:
+        return ""
+
+
+def _with_clawpump_stdio_env(name: str, cfg: dict) -> dict:
+    """Backfill legacy ClawPump stdio configs with the saved API key.
+
+    The stdio subprocess environment intentionally excludes generic secrets
+    unless they are named in ``mcp_servers.<name>.env``. Older ClawPump setup
+    flows saved ``CLAWPUMP_API_KEY`` to ``.env`` but did not add that env block,
+    so the MCP could be configured yet start without credentials.
+    """
+    if not _is_clawpump_stdio_mcp(name, cfg):
+        return cfg
+
+    env = cfg.get("env") if isinstance(cfg.get("env"), dict) else {}
+    if _usable_secret_value(env.get("CLAWPUMP_API_KEY")):
+        return cfg
+
+    key = _clawpump_api_key_for_stdio_env()
+    if not key:
+        return cfg
+
+    updated = dict(cfg)
+    updated_env = dict(env)
+    updated_env["CLAWPUMP_API_KEY"] = key
+    updated["env"] = updated_env
+    return updated
+
 def _interpolate_env_vars(value):
     """Recursively resolve ``${VAR}`` placeholders.
 
@@ -3076,7 +3143,7 @@ def _load_mcp_config() -> Dict[str, dict]:
         for name, cfg in _filter_suspicious_mcp_servers(servers).items():
             interpolated = _interpolate_env_vars(cfg)
             if isinstance(interpolated, dict):
-                safe_servers[name] = interpolated
+                safe_servers[name] = _with_clawpump_stdio_env(name, interpolated)
         return safe_servers
     except Exception as exc:
         logger.debug("Failed to load MCP config: %s", exc)

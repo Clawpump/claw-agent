@@ -7983,14 +7983,51 @@ def _redact_mcp_env(env: Dict[str, Any]) -> Dict[str, str]:
     return out
 
 
+_CLAWPUMP_MCP_NAMES = {"clawpump", "clawpump-stdio", "clawpump-agents"}
+
+
+def _is_clawpump_mcp(name: str) -> bool:
+    return name in _CLAWPUMP_MCP_NAMES or name.startswith("clawpump")
+
+
+def _usable_mcp_secret_value(value: Any) -> bool:
+    text = str(value or "").strip()
+    return bool(text and "${" not in text)
+
+
+def _clawpump_api_key_present(cfg: Optional[Dict[str, Any]] = None) -> bool:
+    if cfg:
+        try:
+            from hermes_cli.mcp_config import _resolve_mcp_server_config
+
+            resolved = _resolve_mcp_server_config(cfg)
+        except Exception:
+            resolved = cfg
+        env = resolved.get("env") if isinstance(resolved, dict) else {}
+        if isinstance(env, dict) and _usable_mcp_secret_value(env.get("CLAWPUMP_API_KEY")):
+            return True
+
+    try:
+        from hermes_cli.config import get_env_value
+
+        return _usable_mcp_secret_value(get_env_value("CLAWPUMP_API_KEY"))
+    except Exception:
+        return False
+
+
 def _mcp_server_authenticated(name: str, cfg: Dict[str, Any]) -> Optional[bool]:
-    """True/False if this server uses OAuth and we can tell whether tokens are
-    on disk; None when auth state isn't applicable/known (stdio key servers).
+    """True/False if this server's auth state can be determined.
 
     Lets the GUI render a real "Connected" vs "Connect" state for the ClawPump
-    MCP instead of guessing — the OAuth token is shared on disk, so the sidebar
-    reflects the same authenticated session the chat agent uses.
+    MCP instead of guessing. OAuth tokens and profile .env values are shared
+    with the chat agent, so the sidebar reflects the same session chat uses.
     """
+    # ClawPump's stdio/API-key transport is fully usable when the cpk_* key is
+    # present. Returning None made the desktop show "Not connected" even while
+    # wallet routes were succeeding through the same MCP server.
+    if _is_clawpump_mcp(name) and cfg.get("command") and not cfg.get("url"):
+        return _clawpump_api_key_present(cfg)
+
     is_oauth = cfg.get("auth") == "oauth" or (cfg.get("url") and not cfg.get("command"))
     if not is_oauth:
         return None
@@ -8024,11 +8061,10 @@ async def list_mcp_servers(profile: Optional[str] = None):
 
     with _profile_scope(profile):
         servers = _get_mcp_servers()
-    return {
-        "servers": [
+        summaries = [
             _mcp_server_summary(name, cfg) for name, cfg in sorted(servers.items())
         ]
-    }
+    return {"servers": summaries}
 
 
 @app.post("/api/mcp/servers")

@@ -284,12 +284,48 @@ class TestInstall:
         monkeypatch.setattr(mcp_catalog, "_prompt_input", lambda *a, **kw: "secret-val")
 
         from hermes_cli.mcp_catalog import install_entry
-        from hermes_cli.config import get_env_value, load_config
+        from hermes_cli.config import get_env_value, read_raw_config
 
         install_entry(_entry("demo"), enable=True)
 
         assert get_env_value("DEMO_KEY") == "secret-val"
-        assert "demo" in load_config()["mcp_servers"]
+        server = read_raw_config()["mcp_servers"]["demo"]
+        assert server["env"] == {"DEMO_KEY": "${DEMO_KEY}"}
+
+    def test_install_with_api_key_omits_blank_optional_env_from_stdio_config(
+        self, catalog_dir, monkeypatch
+    ):
+        body = _basic_manifest(
+            auth={
+                "type": "api_key",
+                "env": [
+                    {"name": "DEMO_REQUIRED_KEY", "prompt": "key", "secret": True},
+                    {
+                        "name": "DEMO_OPTIONAL",
+                        "prompt": "optional",
+                        "required": False,
+                        "secret": False,
+                    },
+                ],
+            }
+        )
+        _write_manifest(catalog_dir, "demo", body)
+
+        from hermes_cli import mcp_catalog
+
+        monkeypatch.setattr(
+            mcp_catalog,
+            "_prompt_input",
+            lambda prompt, **_kw: "secret-val" if prompt == "key" else "",
+        )
+
+        from hermes_cli.config import read_raw_config
+        from hermes_cli.mcp_catalog import install_entry
+
+        install_entry(_entry("demo"), enable=True)
+
+        server = read_raw_config()["mcp_servers"]["demo"]
+        assert server["env"] == {"DEMO_REQUIRED_KEY": "${DEMO_REQUIRED_KEY}"}
 
     def test_install_http_oauth_writes_auth_marker(self, catalog_dir):
         body = _basic_manifest(

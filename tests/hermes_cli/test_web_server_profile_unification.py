@@ -200,6 +200,31 @@ class TestProfileScopedMcp:
         assert resp.json()["ok"] is True
         assert seen["home"] == str(isolated_profiles["worker_beta"])
 
+    def test_mcp_list_auth_state_runs_inside_profile_scope(self, client, isolated_profiles):
+        """The server list must compute auth state inside the selected profile.
+
+        ClawPump stdio auth is stored in the profile .env; reading it after
+        leaving the profile scope makes the desktop show "Not connected" even
+        though that profile's MCP/account is configured.
+        """
+        (isolated_profiles["worker_beta"] / "config.yaml").write_text(
+            "mcp_servers:\n"
+            "  clawpump-stdio:\n"
+            "    command: npx\n"
+            "    args:\n"
+            "      - -y\n"
+            "      - '@clawpump/agents'\n",
+            encoding="utf-8",
+        )
+        (isolated_profiles["worker_beta"] / ".env").write_text(
+            "CLAWPUMP_API_KEY=cpk_worker\n",
+            encoding="utf-8",
+        )
+
+        listing = client.get("/api/mcp/servers", params={"profile": "worker_beta"}).json()
+        srv = next(s for s in listing["servers"] if s["name"] == "clawpump-stdio")
+        assert srv["authenticated"] is True
+
     def test_mcp_remove_scoped(self, client, isolated_profiles):
         (isolated_profiles["worker_beta"] / "config.yaml").write_text(
             "mcp_servers:\n  srv2:\n    url: http://x/sse\n", encoding="utf-8"

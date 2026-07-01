@@ -88,6 +88,41 @@ class TestMcpEndpoints:
             "/api/mcp/servers/nope/enabled", json={"enabled": True}
         ).status_code == 404
 
+    def test_clawpump_stdio_reports_api_key_auth_state(self):
+        from hermes_cli.config import save_env_value
+        from hermes_cli.mcp_config import _save_mcp_server
+
+        assert _save_mcp_server(
+            "clawpump-stdio",
+            {"command": "npx", "args": ["-y", "@clawpump/agents"], "enabled": True},
+        )
+
+        srv = self.client.get("/api/mcp/servers").json()["servers"][0]
+        assert srv["name"] == "clawpump-stdio"
+        assert srv["authenticated"] is False
+
+        save_env_value("CLAWPUMP_API_KEY", "cpk_test")
+
+        srv = self.client.get("/api/mcp/servers").json()["servers"][0]
+        assert srv["authenticated"] is True
+
+    def test_clawpump_stdio_reports_inline_env_auth_state(self):
+        from hermes_cli.mcp_config import _save_mcp_server
+
+        assert _save_mcp_server(
+            "clawpump-stdio",
+            {
+                "command": "npx",
+                "args": ["-y", "@clawpump/agents"],
+                "enabled": True,
+                "env": {"CLAWPUMP_API_KEY": "cpk_inline"},
+            },
+        )
+
+        srv = self.client.get("/api/mcp/servers").json()["servers"][0]
+        assert srv["name"] == "clawpump-stdio"
+        assert srv["authenticated"] is True
+
     def test_catalog_lists_entries(self):
         r = self.client.get("/api/mcp/catalog")
         assert r.status_code == 200

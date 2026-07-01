@@ -10,9 +10,7 @@ import type { SetStatusbarItemGroup } from '../shell/statusbar-controls'
 // Where an unauthenticated user goes to connect the ClawPump MCP — the gateway
 // (browser login / cpk_* key). Shown prominently when not connected.
 const CLAWPUMP_GATEWAY_URL = 'https://agents.clawpump.tech/dashboard/api'
-const CLAWPUMP_NAMES = new Set(['clawpump', 'clawpump-agents', 'clawpump-stdio'])
-
-const isClawpump = (s: McpServer) => CLAWPUMP_NAMES.has(s.name)
+const isClawpump = (s: McpServer) => s.name.startsWith('clawpump')
 
 interface McpViewProps extends React.ComponentProps<'section'> {
   setStatusbarItemGroup?: SetStatusbarItemGroup
@@ -24,10 +22,20 @@ export function McpView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...prop
   const clawpump = servers.find(isClawpump)
   const others = servers.filter(s => !isClawpump(s))
 
-  // authenticated === true → OAuth tokens are on disk (the same session chat
-  // uses), so the MCP is genuinely connected. === false → needs sign-in.
-  const clawpumpConnected = clawpump?.authenticated === true
-  const clawpumpNeedsAuth = clawpump != null && clawpump.authenticated === false
+  // authenticated === true means the backend found the same OAuth/API-key
+  // credentials the chat runtime uses. Enabled-but-not-connected states need
+  // an action surface; otherwise stdio/API-key installs showed "Not connected"
+  // with no way to fix or refresh credentials.
+  const clawpumpConnected = Boolean(clawpump?.enabled && clawpump.authenticated === true)
+  const clawpumpDisabled = clawpump != null && !clawpump.enabled
+  const clawpumpNeedsConnection = clawpump != null && clawpump.enabled && !clawpumpConnected
+  const clawpumpUsesStdio = clawpump?.transport === 'stdio' || Boolean(clawpump?.command)
+  const clawpumpConnectCommand = clawpumpUsesStdio ? 'claw clawpump setup' : 'claw clawpump login'
+  const clawpumpConnectLabel = clawpumpUsesStdio ? 'Connect with API key' : 'Connect at the gateway'
+
+  const clawpumpConnectionHelp = clawpumpUsesStdio
+    ? 'Add or refresh your ClawPump cpk_* API key, then restart the session so the MCP tools come online.'
+    : 'Sign in at the ClawPump gateway to connect — then your 133 ClawPump tools come online in chat and across the app.'
 
   const openGateway = () => void window.hermesDesktop?.openExternal?.(CLAWPUMP_GATEWAY_URL)
 
@@ -62,20 +70,23 @@ export function McpView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...prop
                     <Check className="size-3" /> Connected
                   </Badge>
                 ) : (
-                  <Badge variant="outline">Not connected</Badge>
+                  <Badge variant="outline">{clawpump.enabled ? 'Not connected' : 'Disabled'}</Badge>
                 )}
               </div>
-              {clawpumpNeedsAuth && (
+              {clawpumpDisabled && (
+                <p className="mt-3 text-sm text-muted-foreground">
+                  ClawPump MCP is installed but disabled. Re-enable it in MCP settings, then restart
+                  the session so the tools come online.
+                </p>
+              )}
+              {clawpumpNeedsConnection && (
                 <div className="mt-3 space-y-2">
-                  <p className="text-sm text-muted-foreground">
-                    Sign in at the ClawPump gateway to connect — then your 133 ClawPump tools come
-                    online in chat and across the app.
-                  </p>
+                  <p className="text-sm text-muted-foreground">{clawpumpConnectionHelp}</p>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button onClick={openGateway} size="sm">
-                      <ExternalLink className="size-4" /> Connect at the gateway
+                      <ExternalLink className="size-4" /> {clawpumpConnectLabel}
                     </Button>
-                    <code className="rounded bg-muted px-2 py-1 text-xs">claw clawpump login</code>
+                    <code className="rounded bg-muted px-2 py-1 text-xs">{clawpumpConnectCommand}</code>
                   </div>
                   <p className="break-all text-xs text-muted-foreground">{CLAWPUMP_GATEWAY_URL}</p>
                 </div>

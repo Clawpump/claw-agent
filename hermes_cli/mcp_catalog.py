@@ -36,6 +36,7 @@ from hermes_constants import get_hermes_home, get_optional_mcps_dir
 from hermes_cli.colors import Colors, color
 from hermes_cli.config import (
     load_config,
+    read_raw_config,
     save_config,
     get_env_value,
     save_env_value,
@@ -458,7 +459,10 @@ def _prompt_env_vars(specs: List[EnvVarSpec]) -> Dict[str, str]:
 
 
 def _build_server_config(
-    entry: CatalogEntry, install_dir: Optional[Path]
+    entry: CatalogEntry,
+    install_dir: Optional[Path],
+    *,
+    env_names: Optional[List[str]] = None,
 ) -> dict:
     """Translate a manifest into the ``mcp_servers.<name>`` block format used
     by hermes_cli/mcp_config.py."""
@@ -468,6 +472,8 @@ def _build_server_config(
         cfg["command"] = _expand_install_dir(t.command or "", install_dir)
         if t.args:
             cfg["args"] = [_expand_install_dir(a, install_dir) for a in t.args]
+        if env_names:
+            cfg["env"] = {name: f"${{{name}}}" for name in env_names}
     elif t.type == "http":
         cfg["url"] = t.url
         if entry.auth.type == "oauth":
@@ -519,7 +525,9 @@ def _probe_tools(name: str) -> Optional[List[tuple]]:
 
 def _write_tools_include(name: str, include: Optional[List[str]]) -> None:
     """Persist or clear ``mcp_servers.<name>.tools.include``."""
-    cfg = load_config()
+    # Use the raw YAML here. load_config() expands ${ENV} placeholders, and
+    # saving that expanded object would persist API keys into config.yaml.
+    cfg = read_raw_config()
     servers = cfg.setdefault("mcp_servers", {})
     server_entry = servers.get(name) or {}
     if include is None:
@@ -696,10 +704,11 @@ def install_entry(entry: CatalogEntry, *, enable: bool = True) -> None:
         install_dir = _do_git_install(entry)
 
     # Auth
+    auth_env: Dict[str, str] = {}
     if entry.auth.type == "api_key":
         print()
         print(color("  Configure credentials:", Colors.CYAN))
-        _prompt_env_vars(entry.auth.env)
+        auth_env = _prompt_env_vars(entry.auth.env)
     elif entry.auth.type == "oauth":
         if entry.auth.provider:
             # Case 2: provider-mediated (Google, GitHub, etc.). We rely on
@@ -727,7 +736,11 @@ def install_entry(entry: CatalogEntry, *, enable: bool = True) -> None:
 
     # Build and write the mcp_servers entry (without tools filter yet;
     # _apply_tool_selection() finalizes it below).
-    server_cfg = _build_server_config(entry, install_dir)
+    server_cfg = _build_server_config(
+        entry,
+        install_dir,
+        env_names=list(auth_env) if auth_env else None,
+    )
     server_cfg["enabled"] = enable
 
     from hermes_cli.mcp_config import _save_mcp_server
