@@ -2,13 +2,13 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { getPodWallets, transferWallet, type PodWallet } from '@/hermes'
+import { InlineNotice } from '@/components/notifications'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { writeClipboardText } from '@/components/ui/copy-button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { InlineNotice } from '@/components/notifications'
+import { getPodWallets, type PodWallet, transferWallet } from '@/hermes'
 import { Check, Copy, ExternalLink, Loader2, RefreshCw, Send } from '@/lib/icons'
 import { $pendingChatPrompt } from '@/store/composer'
 import { notify } from '@/store/notifications'
@@ -19,8 +19,14 @@ import type { SetStatusbarItemGroup } from '../shell/statusbar-controls'
 const shortAddr = (a: string | null): string => (a ? `${a.slice(0, 4)}…${a.slice(-4)}` : '—')
 const fmt = (n: number | null | undefined, dp: number): string => (n == null ? '0' : n.toFixed(dp))
 
+// Resolve public assets against BASE_URL: the packaged app loads the SPA from a
+// non-root protocol (vite base './'), so a bare "/claw-mark.png" 404s → broken
+// avatar. Mirrors brand-mark.tsx's assetPath.
+const CLAW_MARK = `${import.meta.env.BASE_URL}claw-mark.png`
+
 function AddressChip({ address }: { address: string }) {
   const [copied, setCopied] = useState(false)
+
   return (
     <button
       className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
@@ -53,8 +59,10 @@ function TransferDialog({ wallet, onClose }: { wallet: PodWallet; onClose: () =>
     if (!valid || busy) {
       return
     }
+
     setBusy(true)
     setError(null)
+
     try {
       const res = await transferWallet({
         add_to_whitelist: addToWhitelist || undefined,
@@ -63,15 +71,20 @@ function TransferDialog({ wallet, onClose }: { wallet: PodWallet; onClose: () =>
         to: to.trim(),
         token
       })
+
       if (!res.ok) {
         if (res.code === 'destination_not_whitelisted') {
           setNeedsWhitelist(true)
           setError('That address isn’t whitelisted yet. Whitelist it and send?')
+
           return
         }
+
         setError(res.error || 'Transfer failed.')
+
         return
       }
+
       notify({ durationMs: 4_000, kind: 'success', title: 'Sent', message: `${amountNum} ${token} sent.` })
       onClose()
     } catch (err) {
@@ -173,7 +186,19 @@ export function WalletView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
                     <img
                       alt=""
                       className="size-7 shrink-0 rounded-full border border-border bg-background object-cover"
-                      src={w.avatar_url || '/claw-mark.png'}
+                      onError={e => {
+                        // The MCP often has no (or a dead) avatar_url — fall back
+                        // to the ClawPump claw mark instead of a broken image.
+                        const img = e.currentTarget
+
+                        if (img.dataset.fallback) {
+                          return
+                        }
+
+                        img.dataset.fallback = '1'
+                        img.src = CLAW_MARK
+                      }}
+                      src={w.avatar_url || CLAW_MARK}
                     />
                     <span className="min-w-0 flex-1 truncate text-sm font-semibold">
                       {w.name || shortAddr(w.agent_id)}

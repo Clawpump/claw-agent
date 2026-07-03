@@ -791,6 +791,24 @@ export function getMcpServers(): Promise<{ servers: McpServer[] }> {
   })
 }
 
+/**
+ * Start the browser OAuth login for an OAuth MCP server (the ClawPump gateway).
+ * A browser opens, the user signs in once, and the session connects — no key
+ * paste. Blocking on the backend (waits for the human), so allow a long timeout.
+ */
+export function mcpLogin(
+  name: string
+): Promise<{ ok: boolean; authenticated?: boolean; error?: string }> {
+  return window.hermesDesktop.api<{ ok: boolean; authenticated?: boolean; error?: string }>({
+    ...profileScoped(),
+    path: `/api/mcp/${encodeURIComponent(name)}/login`,
+    method: 'POST',
+    // The backend blocks while the user completes the browser login; the
+    // default 15s fetch timeout would abort a login still in progress.
+    timeoutMs: 200_000
+  })
+}
+
 /** ClawPump agent wallets (id + name + USDC balance) for the Pod funding picker. */
 export function getPodWallets(): Promise<{ ok: boolean; wallets: PodWallet[]; error?: string }> {
   return window.hermesDesktop.api<{ ok: boolean; wallets: PodWallet[]; error?: string }>({

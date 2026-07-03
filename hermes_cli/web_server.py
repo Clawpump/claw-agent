@@ -8033,7 +8033,16 @@ def _mcp_server_authenticated(name: str, cfg: Dict[str, Any]) -> Optional[bool]:
         return None
     try:
         from hermes_cli.mcp_config import _oauth_tokens_present
-        return bool(_oauth_tokens_present(name))
+
+        if _oauth_tokens_present(name):
+            return True
+        # A clawpump* entry can be configured under an alias (e.g.
+        # "clawpump-agents") while its OAuth token is stored under the canonical
+        # "clawpump" name — chat/wallet routes work via the alias but the badge
+        # read "not connected" because clawpump-agents.json didn't exist.
+        if _is_clawpump_mcp(name) and name != "clawpump":
+            return bool(_oauth_tokens_present("clawpump"))
+        return False
     except Exception:
         return None
 
@@ -8065,6 +8074,68 @@ async def list_mcp_servers(profile: Optional[str] = None):
             _mcp_server_summary(name, cfg) for name, cfg in sorted(servers.items())
         ]
     return {"servers": summaries}
+
+
+def _mcp_login_worker(name: str, profile: Optional[str]) -> Dict[str, Any]:
+    """Force a fresh browser OAuth login for one MCP server. Blocking.
+
+    Mirrors ``hermes mcp login`` (mcp_config.cmd_mcp_login): clear any stale
+    tokens, then probe the server, which triggers the OAuth flow (opens the
+    browser + captures the loopback callback). Runs in an executor because the
+    probe blocks while the human completes the login.
+    """
+    with _profile_scope(profile):
+        from hermes_cli.mcp_config import (
+            _get_mcp_servers,
+            _oauth_tokens_present,
+            _probe_single_server,
+        )
+
+        servers = _get_mcp_servers()
+        if name not in servers:
+            raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
+        config = servers[name]
+        is_oauth = config.get("auth") == "oauth" or (
+            config.get("url") and not config.get("command")
+        )
+        if not is_oauth:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{name}' isn't an OAuth server — set its API key instead",
+            )
+
+        # Wipe any partial/stale tokens so the probe forces a clean browser flow.
+        try:
+            from tools.mcp_oauth_manager import get_manager
+
+            get_manager().remove(name)
+        except Exception:
+            pass
+
+        # The probe opens the browser and captures the callback. Give the human
+        # time to log in (the default 30s connect timeout is too short).
+        _probe_single_server(name, config, connect_timeout=180)
+        return {"ok": True, "authenticated": bool(_oauth_tokens_present(name))}
+
+
+@app.post("/api/mcp/{name}/login")
+async def mcp_oauth_login(name: str, request: Request, profile: Optional[str] = None):
+    """Start the browser OAuth login for an OAuth MCP server (e.g. ClawPump).
+
+    Lets the GUI trigger the one-click ClawPump connect flow the CLI runs via
+    ``claw clawpump login`` — a browser opens to the ClawPump gateway, the user
+    signs in once, and the session comes online without pasting a key.
+    """
+    _require_token(request)
+    try:
+        return await asyncio.get_running_loop().run_in_executor(
+            None, _mcp_login_worker, name, profile
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _log.exception("mcp/login %s failed", name)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/api/mcp/servers")

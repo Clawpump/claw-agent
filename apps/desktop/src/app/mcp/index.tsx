@@ -1,8 +1,8 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { getMcpServers, type McpServer } from '@/hermes'
+import { getMcpServers, mcpLogin, type McpServer } from '@/hermes'
 import { Check, ExternalLink, Loader2, Zap } from '@/lib/icons'
 
 import type { SetStatusbarItemGroup } from '../shell/statusbar-controls'
@@ -17,10 +17,21 @@ interface McpViewProps extends React.ComponentProps<'section'> {
 }
 
 export function McpView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...props }: McpViewProps) {
+  const queryClient = useQueryClient()
   const query = useQuery({ queryKey: ['mcp-servers'], queryFn: getMcpServers, staleTime: 15_000 })
   const servers = query.data?.servers ?? []
   const clawpump = servers.find(isClawpump)
   const others = servers.filter(s => !isClawpump(s))
+
+  // Trigger the real browser OAuth flow (the CLI's `claw clawpump login`) from
+  // the GUI: a browser opens, the user signs in once, and the session connects.
+  const login = useMutation({
+    mutationFn: (name: string) => mcpLogin(name),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['mcp-servers'] })
+      void queryClient.invalidateQueries({ queryKey: ['pod-status'] })
+    }
+  })
 
   // authenticated === true means the backend found the same OAuth/API-key
   // credentials the chat runtime uses. Enabled-but-not-connected states need
@@ -38,6 +49,18 @@ export function McpView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...prop
     : 'Sign in at the ClawPump gateway to connect — then your 133 ClawPump tools come online in chat and across the app.'
 
   const openGateway = () => void window.hermesDesktop?.openExternal?.(CLAWPUMP_GATEWAY_URL)
+
+  // stdio/API-key installs still need a cpk_* key from the gateway page; the
+  // remote OAuth entry connects in one click via the browser login flow.
+  const handleConnect = () => {
+    if (clawpumpUsesStdio || !clawpump) {
+      openGateway()
+
+      return
+    }
+
+    login.mutate(clawpump.name)
+  }
 
   return (
     <section {...props} className="flex h-full min-h-0 flex-col">
@@ -83,12 +106,33 @@ export function McpView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...prop
                 <div className="mt-3 space-y-2">
                   <p className="text-sm text-muted-foreground">{clawpumpConnectionHelp}</p>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Button onClick={openGateway} size="sm">
-                      <ExternalLink className="size-4" /> {clawpumpConnectLabel}
+                    <Button disabled={login.isPending} onClick={handleConnect} size="sm">
+                      {login.isPending ? (
+                        <>
+                          <Loader2 className="size-4 animate-spin" /> Waiting for browser…
+                        </>
+                      ) : (
+                        <>
+                          <ExternalLink className="size-4" /> {clawpumpConnectLabel}
+                        </>
+                      )}
                     </Button>
                     <code className="rounded bg-muted px-2 py-1 text-xs">{clawpumpConnectCommand}</code>
                   </div>
-                  <p className="break-all text-xs text-muted-foreground">{CLAWPUMP_GATEWAY_URL}</p>
+                  {login.isPending && !clawpumpUsesStdio && (
+                    <p className="text-xs text-muted-foreground">
+                      A browser tab opened — sign in with ClawPump to finish connecting.
+                    </p>
+                  )}
+                  {login.isError && (
+                    <p className="text-xs text-destructive">
+                      Login didn&apos;t complete: {(login.error as Error)?.message || 'unknown error'}. Try
+                      again, or run <code className="rounded bg-muted px-1">{clawpumpConnectCommand}</code>.
+                    </p>
+                  )}
+                  {!clawpumpUsesStdio && (
+                    <p className="break-all text-xs text-muted-foreground">{CLAWPUMP_GATEWAY_URL}</p>
+                  )}
                 </div>
               )}
             </div>
