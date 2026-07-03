@@ -26,7 +26,7 @@ const FEATURE_GROUPS: { blurb: string; title: string }[] = [
   { blurb: 'Launch a ClawPump token for your agent', title: 'Token launch' },
   { blurb: 'Discover and list agents', title: 'Marketplace' },
   { blurb: 'On-chain prediction markets', title: 'Predictions' },
-  { blurb: 'Buy and redeem via Laso', title: 'Gift cards' },
+  { blurb: 'Create a virtual debit card, spend at merchants, buy gift cards (Laso)', title: 'Debit & gift cards' },
   { blurb: 'Provision an inbox, send & read email', title: 'Agent mail' },
   { blurb: 'Pay APIs straight from your wallet', title: 'x402 paid APIs' },
   { blurb: 'Pay-per-use inference from your wallet', title: 'Pods (UsePod)' },
