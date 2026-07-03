@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { getMcpServers, mcpLogin, type McpServer } from '@/hermes'
-import { Check, ExternalLink, Loader2, Zap } from '@/lib/icons'
+import { Check, ChevronDown, ChevronRight, Download, ExternalLink, Loader2, Sparkles, Zap } from '@/lib/icons'
+import { openUpdatesWindow } from '@/store/updates'
 
 import type { SetStatusbarItemGroup } from '../shell/statusbar-controls'
 
@@ -12,12 +14,44 @@ import type { SetStatusbarItemGroup } from '../shell/statusbar-controls'
 const CLAWPUMP_GATEWAY_URL = 'https://agents.clawpump.tech/dashboard/api'
 const isClawpump = (s: McpServer) => s.name.startsWith('clawpump')
 
+// What the ClawPump MCP surface actually covers — curated groups over the raw
+// tool list (shown on the MCP page so users can see what they get before/after
+// connecting). Mirrors the manifest description.
+const FEATURE_GROUPS: { blurb: string; title: string }[] = [
+  { blurb: 'Balances + send SOL/USDC (whitelist-gated)', title: 'Wallet & transfers' },
+  { blurb: 'Jupiter quotes and swaps', title: 'Trading & swaps' },
+  { blurb: 'Open, close, manage collateral', title: 'Phoenix perps' },
+  { blurb: 'Dollar-cost-average schedules', title: 'DCA' },
+  { blurb: 'Jupiter lend / borrow', title: 'Lending' },
+  { blurb: 'Launch a ClawPump token for your agent', title: 'Token launch' },
+  { blurb: 'Discover and list agents', title: 'Marketplace' },
+  { blurb: 'On-chain prediction markets', title: 'Predictions' },
+  { blurb: 'Buy and redeem via Laso', title: 'Gift cards' },
+  { blurb: 'Provision an inbox, send & read email', title: 'Agent mail' },
+  { blurb: 'Pay APIs straight from your wallet', title: 'x402 paid APIs' },
+  { blurb: 'Pay-per-use inference from your wallet', title: 'Pods (UsePod)' },
+  { blurb: 'DEX pools, rug checks, token data', title: 'Market intelligence' }
+]
+
+// A desktop build can ship ahead of the agent backend it runs (the Electron
+// shell updates on install, but ~/.hermes/hermes-agent only updates when the
+// user self-updates). An older backend has no POST /api/mcp/{name}/login route,
+// so the request 405s (falls through to the SPA catch-all) or 404s. Detect that
+// so we can tell the user to update instead of surfacing a raw "Method Not
+// Allowed".
+const isStaleBackend = (err: unknown): boolean => {
+  const m = err instanceof Error ? err.message : String(err ?? '')
+
+  return /\b40[45]\b/.test(m) || /Method Not Allowed|No such API endpoint/i.test(m)
+}
+
 interface McpViewProps extends React.ComponentProps<'section'> {
   setStatusbarItemGroup?: SetStatusbarItemGroup
 }
 
 export function McpView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...props }: McpViewProps) {
   const queryClient = useQueryClient()
+  const [showFeatures, setShowFeatures] = useState(false)
   const query = useQuery({ queryKey: ['mcp-servers'], queryFn: getMcpServers, staleTime: 15_000 })
   const servers = query.data?.servers ?? []
   const clawpump = servers.find(isClawpump)
@@ -124,17 +158,51 @@ export function McpView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...prop
                       A browser tab opened — sign in with ClawPump to finish connecting.
                     </p>
                   )}
-                  {login.isError && (
-                    <p className="text-xs text-destructive">
-                      Login didn&apos;t complete: {(login.error as Error)?.message || 'unknown error'}. Try
-                      again, or run <code className="rounded bg-muted px-1">{clawpumpConnectCommand}</code>.
-                    </p>
-                  )}
+                  {login.isError &&
+                    (isStaleBackend(login.error) ? (
+                      <div className="space-y-2">
+                        <p className="text-xs text-destructive">
+                          Your Claw Agent backend is out of date and doesn&apos;t support one-click
+                          login yet. Update it below, or connect right now from a terminal with{' '}
+                          <code className="rounded bg-muted px-1">claw clawpump login</code>.
+                        </p>
+                        <Button onClick={() => openUpdatesWindow()} size="sm" variant="outline">
+                          <Download className="size-4" /> Update Claw Agent
+                        </Button>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-destructive">
+                        Login didn&apos;t complete: {(login.error as Error)?.message || 'unknown error'}.
+                        Try again, or run{' '}
+                        <code className="rounded bg-muted px-1">{clawpumpConnectCommand}</code>.
+                      </p>
+                    ))}
                   {!clawpumpUsesStdio && (
                     <p className="break-all text-xs text-muted-foreground">{CLAWPUMP_GATEWAY_URL}</p>
                   )}
                 </div>
               )}
+
+              <div className="mt-3 border-t pt-3">
+                <button
+                  className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+                  onClick={() => setShowFeatures(v => !v)}
+                  type="button"
+                >
+                  {showFeatures ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+                  <Sparkles className="size-3.5 text-primary" /> What can it do?
+                </button>
+                {showFeatures && (
+                  <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                    {FEATURE_GROUPS.map(f => (
+                      <div className="rounded-md border bg-muted/30 px-2.5 py-1.5" key={f.title}>
+                        <div className="text-xs font-medium">{f.title}</div>
+                        <div className="text-[0.7rem] text-muted-foreground">{f.blurb}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

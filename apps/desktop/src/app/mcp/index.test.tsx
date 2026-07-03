@@ -10,6 +10,10 @@ vi.mock('@/hermes', () => ({
   mcpLogin
 }))
 
+vi.mock('@/store/updates', () => ({
+  openUpdatesWindow: vi.fn()
+}))
+
 async function renderMcpView() {
   const { McpView } = await import('./index')
 
@@ -99,6 +103,30 @@ describe('McpView', () => {
     vi.unstubAllGlobals()
   })
 
+  it('tells the user to update when a stale backend 405s the login endpoint', async () => {
+    getMcpServers.mockResolvedValue({
+      servers: [
+        {
+          auth: 'oauth',
+          authenticated: false,
+          enabled: true,
+          name: 'clawpump',
+          transport: 'http',
+          url: 'https://clawpump-mcp-production.up.railway.app/mcp'
+        }
+      ]
+    })
+    mcpLogin.mockRejectedValue(
+      new Error(`Error invoking remote method 'hermes:api': Error: 405: {"detail":"Method Not Allowed"}`)
+    )
+
+    await renderMcpView()
+
+    fireEvent.click(await screen.findByRole('button', { name: /connect at the gateway/i }))
+
+    expect(await screen.findByText(/backend is out of date/i)).toBeTruthy()
+  })
+
   it('recognizes custom clawpump-prefixed server names as the ClawPump MCP', async () => {
     getMcpServers.mockResolvedValue({
       servers: [
@@ -117,6 +145,28 @@ describe('McpView', () => {
     expect(await screen.findByText('ClawPump MCP')).toBeTruthy()
     expect(screen.getByText('clawpump-agents-local')).toBeTruthy()
     expect(screen.queryByText('Other servers')).toBeNull()
+  })
+
+  it('reveals the ClawPump feature groups when "What can it do?" is clicked', async () => {
+    getMcpServers.mockResolvedValue({
+      servers: [
+        {
+          authenticated: true,
+          command: 'npx',
+          enabled: true,
+          name: 'clawpump-stdio',
+          transport: 'stdio'
+        }
+      ]
+    })
+
+    await renderMcpView()
+
+    // Collapsed by default.
+    expect(screen.queryByText('Token launch')).toBeNull()
+    fireEvent.click(await screen.findByRole('button', { name: /what can it do/i }))
+    expect(await screen.findByText('Token launch')).toBeTruthy()
+    expect(screen.getByText('Agent mail')).toBeTruthy()
   })
 
   it('shows disabled ClawPump servers as disabled without auth actions', async () => {
