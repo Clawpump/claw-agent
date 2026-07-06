@@ -1299,6 +1299,24 @@ def anthropic_prompt_cache_policy(
         return True, True
     if (is_openrouter or is_nous_portal) and is_claude:
         return True, False
+    # UsePod ("Pod", api.usepod.ai) is ClawPump's pay-per-use inference proxy —
+    # a universal OpenAI-wire marketplace (~750 models: Claude, GLM, Grok,
+    # Qwen, Kimi, DeepSeek, GPT, …) that relays to upstream providers and
+    # forwards/strips cache_control per model. Send envelope-layout markers for
+    # ALL Pod traffic — gating on is_claude would leave every *other* explicit-
+    # cache family (GLM/Qwen/Kimi/MiniMax/…) falling through to (False, False),
+    # re-billing the entire prompt (system + skills + MCP tool schemas — tens
+    # of thousands of tokens) at 0% cache hits on every turn. On a multi-turn
+    # task that compounds until it drains the user's USDC balance. Verified
+    # live on Pod: the markers never error (even strict OpenAI-schema models
+    # return 200), honoring models (Claude/GLM/Grok/…) report 0.1× cache reads,
+    # and non-honoring models ignore them harmlessly.
+    is_usepod = (
+        provider_lower == "usepod"
+        or base_url_host_matches(eff_base_url, "api.usepod.ai")
+    )
+    if is_usepod:
+        return True, False
     # Nous Portal Qwen (e.g. qwen3.6-plus) takes the same envelope-layout
     # cache_control path as Portal Claude. Portal proxies to OpenRouter
     # and the upstream Qwen route accepts cache_control markers; without
