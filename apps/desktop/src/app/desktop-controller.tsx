@@ -139,6 +139,7 @@ const SettingsView = lazy(async () => ({ default: (await import('./settings')).S
 const SkillsView = lazy(async () => ({ default: (await import('./skills')).SkillsView }))
 const WalletView = lazy(async () => ({ default: (await import('./wallet')).WalletView }))
 const X402View = lazy(async () => ({ default: (await import('./x402')).X402View }))
+const AgentMailView = lazy(async () => ({ default: (await import('./agent-mail')).AgentMailView }))
 const McpView = lazy(async () => ({ default: (await import('./mcp')).McpView }))
 
 // Latest cron-job sessions surfaced in the collapsed "Cron jobs" section. The
@@ -1203,6 +1204,14 @@ export function DesktopController() {
               </Suspense>
             }
             path="x402"
+          />
+          <Route
+            element={
+              <Suspense fallback={null}>
+                <AgentMailView setStatusbarItemGroup={setStatusbarItemGroup} />
+              </Suspense>
+            }
+            path="mail"
           />
           <Route
             element={

@@ -763,6 +763,159 @@ export function searchX402(
   })
 }
 
+// ── Agent Mail (AgentMail, via the ClawPump MCP) ───────────────────────
+// Machine-global like /api/wallet/* — mirror getPodWallets' profile handling.
+export interface MailInbox {
+  id: string
+  agentId: string
+  provider: string
+  inboxId: string
+  emailAddress: string
+  username: string
+  domain: string
+  webhookId: string | null
+  verified: boolean
+  status: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MailMessage {
+  id: string
+  agentId: string
+  inboxId: string
+  messageId: string
+  threadId: string | null
+  direction: 'inbound' | 'outbound'
+  fromAddress: string | null
+  toAddresses: string[]
+  ccAddresses: string[]
+  subject: string | null
+  textBody: string | null
+  htmlBody: string | null
+  preview: string | null
+  read: boolean
+  agentmailCreatedAt: string | null
+  createdAt: string
+}
+
+export interface MailAddressResponse {
+  ok: boolean
+  error?: string
+  has_inbox: boolean
+  inbox: MailInbox | null
+}
+
+export interface MailMessagesResponse {
+  ok: boolean
+  error?: string
+  messages: MailMessage[]
+}
+
+export interface MailMessageResponse {
+  ok: boolean
+  error?: string
+  message: MailMessage | null
+}
+
+export interface MailCreateResponse {
+  ok: boolean
+  error?: string
+  inbox?: MailInbox | null
+  alreadyExisted?: boolean
+  note?: string | null
+}
+
+export interface MailSendBody {
+  agent_id: string
+  to: string[]
+  subject: string
+  text?: string
+  html?: string
+  cc?: string[]
+  bcc?: string[]
+  reply_to?: string
+  confirm: boolean
+}
+
+export interface MailSendResponse {
+  ok: boolean
+  error?: string
+  result?: unknown
+}
+
+/** The agent's AgentMail inbox (address + verification state), if provisioned. */
+export function getMailAddress(agentId: string): Promise<MailAddressResponse> {
+  return window.hermesDesktop.api<MailAddressResponse>({
+    ...profileScoped(),
+    path: `/api/mail/address?agent_id=${encodeURIComponent(agentId)}`
+  })
+}
+
+/** List an agent's mail; direction narrows to one side (inbox or sent). */
+export function listMail(opts: {
+  agentId: string
+  direction?: 'inbound' | 'outbound'
+  limit?: number
+}): Promise<MailMessagesResponse> {
+  const qs = new URLSearchParams({ agent_id: opts.agentId })
+
+  if (opts.direction) {
+    qs.set('direction', opts.direction)
+  }
+
+  if (opts.limit) {
+    qs.set('limit', String(opts.limit))
+  }
+
+  return window.hermesDesktop.api<MailMessagesResponse>({
+    ...profileScoped(),
+    path: `/api/mail/messages?${qs.toString()}`
+  })
+}
+
+/** Read one message's full body (fetches text/html on demand). */
+export function readMail(messageId: string, agentId: string): Promise<MailMessageResponse> {
+  return window.hermesDesktop.api<MailMessageResponse>({
+    ...profileScoped(),
+    path: `/api/mail/message?message_id=${encodeURIComponent(messageId)}&agent_id=${encodeURIComponent(agentId)}`
+  })
+}
+
+/**
+ * Provision an AgentMail inbox for the agent — a one-time ~$2 USDC payment from
+ * the agent wallet over x402. The on-chain payment can take 30-90s, so allow a
+ * long timeout (the default 15s fetch would abort a money-spent call), matching
+ * provisionPod.
+ */
+export function createInbox(body: {
+  agent_id: string
+  username?: string
+  confirm: boolean
+}): Promise<MailCreateResponse> {
+  return window.hermesDesktop.api<MailCreateResponse>({
+    ...profileScoped(),
+    path: '/api/mail/create',
+    method: 'POST',
+    body,
+    timeoutMs: 120_000
+  })
+}
+
+/**
+ * Send an email from the agent's inbox. Any per-send fee is paid in USDC over
+ * x402; like createInbox, allow a long timeout so a paid send isn't aborted.
+ */
+export function sendMail(body: MailSendBody): Promise<MailSendResponse> {
+  return window.hermesDesktop.api<MailSendResponse>({
+    ...profileScoped(),
+    path: '/api/mail/send',
+    method: 'POST',
+    body,
+    timeoutMs: 120_000
+  })
+}
+
 /** Whether a Pod is configured as the provider, with its remaining balance. */
 export function getPodStatus(): Promise<{ connected: boolean; balance_usdc?: number | null }> {
   return window.hermesDesktop.api<{ connected: boolean; balance_usdc?: number | null }>({

@@ -10,6 +10,7 @@ export const PROFILES_ROUTE = '/profiles'
 export const AGENTS_ROUTE = '/agents'
 export const WALLET_ROUTE = '/wallet'
 export const X402_ROUTE = '/x402'
+export const MAIL_ROUTE = '/mail'
 export const MCP_ROUTE = '/mcp'
 
 export type AppView =
@@ -18,6 +19,7 @@ export type AppView =
   | 'chat'
   | 'command-center'
   | 'cron'
+  | 'mail'
   | 'mcp'
   | 'messaging'
   | 'profiles'
@@ -31,6 +33,7 @@ export type AppRouteId =
   | 'artifacts'
   | 'command-center'
   | 'cron'
+  | 'mail'
   | 'mcp'
   | 'messaging'
   | 'new'
@@ -58,6 +61,7 @@ export const APP_ROUTES = [
   { id: 'agents', path: AGENTS_ROUTE, view: 'agents' },
   { id: 'wallet', path: WALLET_ROUTE, view: 'wallet' },
   { id: 'x402', path: X402_ROUTE, view: 'x402' },
+  { id: 'mail', path: MAIL_ROUTE, view: 'mail' },
   { id: 'mcp', path: MCP_ROUTE, view: 'mcp' }
 ] as const satisfies readonly AppRoute[]
 

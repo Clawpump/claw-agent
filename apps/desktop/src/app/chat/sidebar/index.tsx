@@ -95,7 +95,7 @@ import {
   sessionPinId
 } from '@/store/session'
 
-import { type AppView, ARTIFACTS_ROUTE, MCP_ROUTE, MESSAGING_ROUTE, SKILLS_ROUTE, WALLET_ROUTE, X402_ROUTE } from '../../routes'
+import { type AppView, ARTIFACTS_ROUTE, MAIL_ROUTE, MCP_ROUTE, MESSAGING_ROUTE, SKILLS_ROUTE, WALLET_ROUTE, X402_ROUTE } from '../../routes'
 import { SidebarPanelLabel } from '../../shell/sidebar-label'
 import type { SidebarNavItem } from '../../types'
 
@@ -134,6 +134,7 @@ const SIDEBAR_NAV: SidebarNavItem[] = [
   { id: 'artifacts', label: '', icon: props => <Codicon name="files" {...props} />, route: ARTIFACTS_ROUTE },
   { id: 'wallet', label: 'Wallet', icon: props => <Codicon name="credit-card" {...props} />, route: WALLET_ROUTE },
   { id: 'x402', label: 'x402', icon: props => <Codicon name="zap" {...props} />, route: X402_ROUTE },
+  { id: 'mail', label: 'Mail', icon: props => <Codicon name="mail" {...props} />, route: MAIL_ROUTE },
   { id: 'mcp', label: 'MCP', icon: props => <Codicon name="plug" {...props} />, route: MCP_ROUTE }
 ]
 

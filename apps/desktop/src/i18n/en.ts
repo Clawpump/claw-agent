@@ -1153,7 +1153,8 @@ export const en: Translations = {
       messaging: 'Messaging',
       artifacts: 'Artifacts',
       wallet: 'Wallet',
-      x402: 'x402 Marketplace'
+      x402: 'x402 Marketplace',
+      mail: 'Mail'
     },
     searchAria: 'Search sessions',
     searchPlaceholder: 'Search sessions…',
