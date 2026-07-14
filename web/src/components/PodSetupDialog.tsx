@@ -219,7 +219,7 @@ export default function PodSetupDialog({
             </div>
 
             <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
-              <Button variant="outline" disabled={busy} onClick={onClose}>
+              <Button outlined disabled={busy} onClick={onClose}>
                 Cancel
               </Button>
               <Button disabled={!canFund} onClick={() => void fund()}>
