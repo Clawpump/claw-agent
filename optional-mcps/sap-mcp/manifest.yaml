@@ -6,7 +6,7 @@
 # SAP MCP is an optional coordination and payment layer for ClawPump agents:
 #   - On-chain agent registry with discoverability (protocol: "clawpump")
 #   - x402/pay.sh payment layer with local signing (non-custodial)
-#   - Skills bundle (sap_skills_install with agent: "clawpump")
+#   - Skills discovery and optional skills install
 #
 # ClawPump is a Hermes downstream fork: its config lives in
 # ~/.hermes/config.yaml (override via HERMES_HOME), resolved by Hermes'
@@ -15,7 +15,7 @@
 # After install, a ClawPump agent can:
 #   1. Register on-chain as a SAP merchant (discoverable by all SAP clients)
 #   2. Accept x402 payments for its tools
-#   3. Install SAP skills into ~/.hermes/skills/
+#   3. Opt into SAP skills installation under ~/.hermes/skills/
 manifest_version: 1
 
 name: sap-mcp
@@ -24,8 +24,9 @@ description: >-
   SAP identity, registry, reputation, tools, memory, payments, settlement,
   and proof-of-execution on Solana. Supports agent runtimes including Hermes,
   Codex, Claude, OpenClaw, and ClawPump. The MCP layer is read-only by
-  default; paid and write tools (register, escrow, settlement, subscription,
-  staking, dispute) are opt-in and require a local SAP profile with a wallet.
+  default; paid and write tools (skills install, register, escrow,
+  settlement, subscription, staking, dispute) are opt-in and require a local
+  SAP profile with a wallet.
   The hosted server is non-custodial: a local stdio sap_payments bridge signs
   x402 challenges with the user wallet; keys never leave the machine.
 
@@ -44,10 +45,10 @@ auth:
 
 # Tool selection at install time.
 # SAP MCP exposes 300+ tools. The default-enabled set below covers free
-# discovery, identity, cost estimation, and skills — the read-only and
-# bootstrap surface. Write tools (register, escrow, settlement, payments,
-# subscription, staking, dispute) require a local SAP profile with a wallet
-# and are opt-in.
+# discovery, identity, cost estimation, and skills metadata — the read-only
+# and bootstrap surface. Write tools (skills install, register, escrow,
+# settlement, payments, subscription, staking, dispute) require a local SAP
+# profile with a wallet and are opt-in.
 tools:
   default_enabled:
     # bootstrap
@@ -65,7 +66,6 @@ tools:
     # skills (free)
     - sap_skills_list
     - sap_skills_bundle
-    - sap_skills_install
     - sap_skills_upgrade_plan
     # profile (free reads)
     - sap_profile_current
@@ -83,16 +83,19 @@ post_install: |
      npx @oobe-protocol-labs/sap-mcp-server@0.9.68 sap-mcp-config wizard
      Choose "ClawPump" when prompted for your runtime.
 
-  2. Install SAP skills into ~/.hermes/skills/:
-     Call sap_skills_install with { "agent": "clawpump", "confirm": true }
+  2. Review SAP skills:
+     Call sap_skills_list, sap_skills_bundle, or sap_skills_upgrade_plan.
+     Installing skills writes into ~/.hermes/skills/ and is opt-in.
 
   3. Register your ClawPump agent on-chain (optional, for discoverability):
-     Call sap_agent_identity_plan, then sap_payments_register_agent with
+     First enable write/paid tools with hermes mcp configure sap-mcp.
+     Then call sap_agent_identity_plan and sap_payments_register_agent with
      confirm: true. Add your agent to the "clawpump" protocol index.
 
   4. Discover ClawPump agents:
      Call sap_discover_agents with { "protocol": "clawpump" }
 
-  WRITE/PAID TOOLS (register, escrow, settle, subscription, staking, payments,
-  dispute) require a local SAP profile with a wallet. Enable them in the
-  install checklist or later with: hermes mcp configure sap-mcp
+  WRITE/PAID TOOLS (skills install, register, escrow, settle, subscription,
+  staking, payments, dispute) require a local SAP profile with a wallet.
+  Enable them in the install checklist or later with:
+  hermes mcp configure sap-mcp

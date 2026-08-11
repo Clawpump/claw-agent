@@ -1,23 +1,20 @@
 #!/usr/bin/env bash
 # sap-mcp-setup.sh — SAP MCP integration setup for ClawPump Agent
 #
-# ClawPump is a Hermes downstream fork. Its configuration lives in
-# ~/.hermes/config.yaml (override via HERMES_HOME), resolved by Hermes'
-# get_hermes_home(). This script merges the SAP MCP hosted server and the
-# local sap_payments x402 bridge into that config WITHOUT clobbering any
-# existing mcp_servers entries: it parses the YAML, merges the two keys
-# into the existing mcp_servers mapping, and writes it back. A second
-# top-level mcp_servers: key is never appended.
+# ClawPump is a Hermes downstream fork. Its configuration lives in the
+# platform-native Hermes home (override via HERMES_HOME), resolved by Hermes'
+# get_hermes_home(). This script merges the SAP MCP catalog server and the
+# local sap_payments x402 bridge into that config WITHOUT clobbering existing
+# hardening such as enabled: false or tools.include. It updates only the
+# transport keys it owns, then writes via Hermes save_config().
 #
 # Usage:
 #   ./scripts/sap-mcp-setup.sh           # interactive wizard
 #   ./scripts/sap-mcp-setup.sh --repair  # repair bridge only, keep profile
 set -euo pipefail
 
-# Resolve ClawPump/Hermes home (matches Hermes get_hermes_home()).
-CLAWPUMP_HOME="${HERMES_HOME:-$HOME/.hermes}"
-CLAWPUMP_CONFIG="$CLAWPUMP_HOME/config.yaml"
-CLAWPUMP_SKILLS="$CLAWPUMP_HOME/skills"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
 # Pin a known-good version instead of floating @latest. A machine that is
 # about to receive a wallet must not run whatever is published at HEAD.
@@ -41,9 +38,48 @@ ok()   { echo -e "${GREEN}[OK]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 
 REPAIR_ONLY=false
-if [ "${1:-}" = "--repair" ]; then
-  REPAIR_ONLY=true
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --repair)
+      REPAIR_ONLY=true
+      ;;
+    -h|--help)
+      sed -n '1,16p' "$0"
+      exit 0
+      ;;
+    *)
+      warn "Unknown argument: $1"
+      echo "Usage: $0 [--repair]" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    warn "$1 is required but was not found on PATH."
+    exit 1
+  fi
+}
+
+require_cmd python3
+require_cmd node
+require_cmd npx
+
+# Resolve ClawPump/Hermes home through Hermes' own platform-aware helper.
+if [ -n "${HERMES_HOME:-}" ]; then
+  CLAWPUMP_HOME="$HERMES_HOME"
+else
+  CLAWPUMP_HOME="$(PYTHONPATH="$REPO_ROOT" python3 - <<'PY'
+from hermes_constants import get_hermes_home
+print(get_hermes_home())
+PY
+)"
 fi
+export HERMES_HOME="$CLAWPUMP_HOME"
+CLAWPUMP_CONFIG="$CLAWPUMP_HOME/config.yaml"
+CLAWPUMP_SKILLS="$CLAWPUMP_HOME/skills"
 
 # --- 1. Ensure home exists ------------------------------------------------
 if [ ! -d "$CLAWPUMP_HOME" ]; then
@@ -54,7 +90,6 @@ if [ ! -d "$CLAWPUMP_HOME" ]; then
 fi
 
 mkdir -p "$CLAWPUMP_HOME"
-touch "$CLAWPUMP_CONFIG"
 
 # --- 2. Merge SAP MCP + sap_payments into config.yaml --------------------
 # Parse-and-merge (never append a duplicate top-level key) so existing
@@ -63,6 +98,7 @@ merge_config() {
   SAP_MCP_HOSTED_URL="$SAP_MCP_HOSTED_URL" \
   SAP_MCP_PINNED="$SAP_MCP_PINNED" \
   CLAWPUMP_CONFIG="$CLAWPUMP_CONFIG" \
+  PYTHONPATH="$REPO_ROOT" \
   python3 - <<'PY'
 import os
 import sys
@@ -90,30 +126,62 @@ except yaml.YAMLError as exc:
     )
     sys.exit(1)
 
+if raw.strip() and data is None:
+    sys.stderr.write(
+        f"[SAP MCP] {path} contains no YAML mapping; aborting to avoid discarding comments-only config.\n"
+    )
+    sys.exit(1)
+
 if not isinstance(data, dict):
-    data = {}
+    sys.stderr.write(
+        f"[SAP MCP] {path} does not contain a top-level YAML mapping; aborting to avoid data loss.\n"
+    )
+    sys.exit(1)
+
+from hermes_cli.config import is_managed, managed_error, save_config
+
+if is_managed():
+    managed_error("configure SAP MCP")
+    sys.exit(1)
 
 servers = data.get("mcp_servers")
 if not isinstance(servers, dict):
     servers = {}
     data["mcp_servers"] = servers
 
-servers["sap"] = {
-    "url": hosted_url,
-    "transport": "streamable-http",
-}
-servers["sap_payments"] = {
+legacy = servers.get("sap")
+if (
+    "sap-mcp" not in servers
+    and isinstance(legacy, dict)
+    and legacy.get("url") == hosted_url
+):
+    servers["sap-mcp"] = servers.pop("sap")
+
+def merge_entry(key, updates):
+    entry = servers.get(key)
+    if not isinstance(entry, dict):
+        entry = {}
+    entry.update(updates)
+    servers[key] = entry
+    return entry
+
+merge_entry("sap-mcp", {"url": hosted_url})
+payments = merge_entry("sap_payments", {
     "command": "npx",
     "args": ["--yes", "--package", pinned, "sap-mcp-server"],
-    "env": {
-        "SAP_MCP_PAYMENTS_BRIDGE_ONLY": "true",
-        "SAP_LOG_LEVEL": "info",
-    },
-}
+})
+env = payments.get("env")
+if not isinstance(env, dict):
+    env = {}
+env.update({
+    "SAP_MCP_PAYMENTS_BRIDGE_ONLY": "true",
+    "SAP_LOG_LEVEL": "info",
+})
+payments["env"] = env
 
 path.parent.mkdir(parents=True, exist_ok=True)
-path.write_text(yaml.safe_dump(data, sort_keys=False, default_flow_style=False))
-print(f"[SAP MCP] merged sap + sap_payments into {path}")
+save_config(data)
+print(f"[SAP MCP] merged sap-mcp + sap_payments into {path}")
 PY
 }
 
@@ -138,6 +206,7 @@ ok "SAP MCP integration complete."
 echo ""
 echo "Next steps:"
 echo "  1. Restart your ClawPump agent so the new MCP servers load"
-echo "  2. Call sap_skills_install with { agent: 'clawpump', confirm: true }"
-echo "  3. Call sap_discover_agents with { protocol: 'clawpump' }"
-echo "  4. Register your agent on-chain: sap_payments_register_agent"
+echo "  2. Call sap_discover_agents with { protocol: 'clawpump' }"
+echo "  3. For skills or on-chain registration, explicitly enable write/paid tools:"
+echo "     hermes mcp configure sap-mcp"
+echo "  4. Then call sap_skills_install or sap_payments_register_agent only after opt-in"
