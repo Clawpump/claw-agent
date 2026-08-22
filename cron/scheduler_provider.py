@@ -14,7 +14,7 @@ delivery.
 
 The built-in InProcessCronScheduler runs the historical 60s daemon-thread
 ticker. Alternative providers (e.g. Chronos, a NAS-mediated managed-cron
-provider for scale-to-zero deployments) live under plugins/cron/<name>/ and are
+provider for scale-to-zero deployments) live under plugins/cron_providers/<name>/ and are
 selected via the `cron.provider` config key (empty = built-in).
 """
 from __future__ import annotations
@@ -134,7 +134,7 @@ def resolve_cron_scheduler() -> "CronScheduler":
         return InProcessCronScheduler()
 
     try:
-        from plugins.cron import load_cron_scheduler
+        from plugins.cron_providers import load_cron_scheduler
         provider = load_cron_scheduler(name)
         if provider is None:
             logger.warning("cron.provider '%s' not found; using built-in ticker", name)
@@ -156,22 +156,50 @@ class InProcessCronScheduler(CronScheduler):
 
     ``start()`` blocks in the tick loop until ``stop_event`` is set, identical
     to the pre-refactor ``_start_cron_ticker`` core loop. The caller runs it in
-    a daemon thread.
+    a daemon thread. ``can_dispatch`` is an optional synchronous gate supplied
+    by GatewayRunner during external drain; skipped ticks leave due jobs intact
+    for the next allowed tick.
     """
 
     @property
     def name(self) -> str:
         return "builtin"
 
-    def start(self, stop_event, *, adapters=None, loop=None, interval=60):
+    def start(self, stop_event, *, adapters=None, loop=None, interval=60, can_dispatch=None):
         import logging
         from cron.scheduler import tick as cron_tick
+        from cron.jobs import record_ticker_heartbeat
 
         logger = logging.getLogger("cron.scheduler_provider")
         logger.info("In-process cron scheduler started (interval=%ds)", interval)
+        # Heartbeat once before the first sleep so `hermes cron status` sees a
+        # live ticker immediately after startup, not only after the first tick.
+        record_ticker_heartbeat()
         while not stop_event.is_set():
+            ok = False
             try:
-                cron_tick(verbose=False, adapters=adapters, loop=loop, sync=False)
-            except Exception as e:
-                logger.debug("Cron tick error: %s", e)
+                if can_dispatch is not None and not can_dispatch():
+                    logger.debug("Cron dispatch paused while gateway drains existing work")
+                else:
+                    cron_tick(
+                        verbose=False,
+                        adapters=adapters,
+                        loop=loop,
+                        sync=False,
+                        can_dispatch=can_dispatch,
+                    )
+                ok = True
+            except BaseException as e:
+                # Catch BaseException (not just Exception) so a SystemExit from
+                # a misbehaving provider SDK / agent retry path does not kill
+                # the ticker thread silently (#32612). KeyboardInterrupt is
+                # intentionally caught here too — gateway shutdown is driven by
+                # stop_event (set by the main thread's signal handler), not by
+                # an exception in this daemon thread, so swallowing it and
+                # re-checking stop_event keeps shutdown clean.
+                logger.error("Cron tick error: %s", e, exc_info=True)
+            # Record liveness every iteration; bump the success marker only on a
+            # clean tick, so status can tell "alive but failing every tick" from
+            # "actually firing jobs" (#32612, #32895).
+            record_ticker_heartbeat(success=ok)
             stop_event.wait(interval)
