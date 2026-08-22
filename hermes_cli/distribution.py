@@ -63,6 +63,8 @@ BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "completion_menu_current_bg": "#14532D",
             "completion_menu_meta_bg": "#0B1F14",
             "completion_menu_meta_current_bg": "#14532D",
+            "shell_dollar": "#4ADE80",
+            "voice_status_bg": "#0B1F14",
         },
         "spinner": {
             "waiting_faces": ["(◴)", "(◷)", "(◶)", "(◵)", "(<>)"],
@@ -210,12 +212,13 @@ def try_self_update(project_root: Any) -> bool:
     if not (Path(project_root) / ".claw-bundle").exists():
         return False
 
-    import shutil
     import subprocess
     import sys
 
+    from hermes_constants import find_node_executable
+
     print("→ Updating ClawPump agent via npm (npx @clawpump/claw-agent@latest)…")
-    npx = shutil.which("npx")
+    npx = find_node_executable("npx")
     if not npx:
         print("✗ npx (Node.js) not found. Install Node.js, then run:")
         print("    npx @clawpump/claw-agent@latest")

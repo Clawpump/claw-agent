@@ -2,7 +2,8 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 
 import { useI18n } from '@/i18n'
-import { requestModelOptions } from '@/lib/model-options'
+import { modelOptionsQueryKey, requestModelOptions } from '@/lib/model-options'
+import { modelSearchText } from '@/lib/model-search-text'
 import { currentPickerSelection } from '@/lib/model-status-label'
 import { normalize } from '@/lib/text'
 import type { ModelOptionProvider, ModelPricing } from '@/types/hermes'
@@ -17,6 +18,7 @@ import { PodSetupDialog } from './pod-setup-dialog'
 import { Button } from './ui/button'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog'
+import { HighlightMatches } from './ui/highlight-matches'
 import { Skeleton } from './ui/skeleton'
 
 interface ModelPickerDialogProps {
@@ -27,11 +29,12 @@ interface ModelPickerDialogProps {
   currentModel: string
   currentProvider: string
   onSelect: (selection: { provider: string; model: string }) => void
+  profile?: string
   /**
-   * Optional class to apply to DialogContent. Use to override z-index when
-   * stacking the picker on top of another fixed overlay (e.g. the desktop
-   * onboarding overlay, which sits at z-1300; the default Dialog z-130 ends
-   * up rendering underneath and blocks pointer events).
+   * Optional class for DialogContent. Use it to lift the picker onto a higher
+   * rung of the overlay ladder when it opens over another fixed overlay (the
+   * desktop onboarding overlay, say) — on the default modal rung it renders
+   * underneath and blocks pointer events.
    */
   contentClassName?: string
 }
@@ -44,6 +47,7 @@ export function ModelPickerDialog({
   currentModel,
   currentProvider,
   onSelect,
+  profile = 'default',
   contentClassName
 }: ModelPickerDialogProps) {
   const { t } = useI18n()
@@ -56,7 +60,7 @@ export function ModelPickerDialog({
   const [search, setSearch] = useState('')
 
   const modelOptions = useQuery({
-    queryKey: ['model-options', sessionId || 'global'],
+    queryKey: modelOptionsQueryKey(profile, sessionId),
     queryFn: () => requestModelOptions({ gateway: gw, sessionId }),
     enabled: open
   })
@@ -64,7 +68,6 @@ export function ModelPickerDialog({
   const providers = modelOptions.data?.providers ?? []
 
   const { model: optionsModel, provider: optionsProvider } = currentPickerSelection(
-    !!sessionId,
     { model: currentModel, provider: currentProvider },
     modelOptions.data
   )
@@ -85,7 +88,7 @@ export function ModelPickerDialog({
   // Open the full onboarding provider selector to add/switch a provider.
   // Reuses the entire onboarding flow (OAuth rows, API-key form, device-code,
   // model-confirm) instead of duplicating provider UI here. Closes the picker
-  // so the onboarding overlay (z-1300) isn't rendered underneath it.
+  // so the onboarding overlay isn't rendered underneath it.
   const addProvider = () => {
     startManualOnboarding()
     onOpenChange(false)
@@ -99,7 +102,10 @@ export function ModelPickerDialog({
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className={cn('max-h-[85vh] max-w-2xl gap-0 overflow-hidden p-0', contentClassName)}>
+      <DialogContent
+        bodyClassName="gap-0 overflow-hidden p-0"
+        className={cn('max-h-[85vh] max-w-2xl', contentClassName)}
+      >
         <DialogHeader className="border-b border-border px-4 py-3">
           <DialogTitle>{copy.title}</DialogTitle>
           <DialogDescription className="font-mono text-xs leading-relaxed">
@@ -231,7 +237,7 @@ function ModelResults({
 
   const matches = (provider: ModelOptionProvider, model: string) =>
     !q ||
-    model.toLowerCase().includes(q) ||
+    modelSearchText(model).toLowerCase().includes(q) ||
     provider.name.toLowerCase().includes(q) ||
     provider.slug.toLowerCase().includes(q)
 
@@ -284,7 +290,9 @@ function ModelResults({
                   }}
                   value={`${provider.slug}:${model}`}
                 >
-                  <span className="min-w-0 flex-1 truncate">{model}</span>
+                  <span className="min-w-0 flex-1 truncate">
+                    <HighlightMatches query={search} text={model} />
+                  </span>
                   {locked && (
                     <span className="shrink-0 text-[0.62rem] uppercase tracking-wide opacity-80">{copy.pro}</span>
                   )}
@@ -316,26 +324,62 @@ function ModelPrice({ price, isCurrent }: { price?: ModelPricing; isCurrent: boo
 
   if (price.free) {
     return (
-      <span
-        className={cn(
-          'shrink-0 rounded-sm px-1 py-0.5 text-[0.62rem] font-semibold uppercase tracking-wide',
-          isCurrent ? 'bg-primary-foreground/20' : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-        )}
-      >
-        {copy.free}
+      <span className="shrink-0 inline-flex items-center gap-1.5">
+        {typeof price.discount_percent === 'number' ? (
+          <span
+            className={cn(
+              'rounded-sm px-1 py-0.5 text-[0.62rem] font-semibold',
+              isCurrent ? 'bg-primary-foreground/20' : 'bg-amber-500/15 text-amber-700 dark:text-amber-400'
+            )}
+          >
+            -{price.discount_percent}%
+          </span>
+        ) : null}
+        <span
+          className={cn(
+            'shrink-0 rounded-sm px-1 py-0.5 text-[0.62rem] font-semibold uppercase tracking-wide',
+            isCurrent ? 'bg-primary-foreground/20' : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+          )}
+        >
+          {copy.free}
+        </span>
       </span>
     )
   }
 
+  const onSale = typeof price.discount_percent === 'number' && Boolean(price.was_input || price.was_output)
+
   return (
     <span
       className={cn(
-        'shrink-0 text-[0.66rem] tabular-nums',
+        'shrink-0 inline-flex items-center gap-1.5 text-[0.66rem] tabular-nums',
         isCurrent ? 'text-primary-foreground/80' : 'text-muted-foreground'
       )}
       title={copy.priceTitle}
     >
-      {price.input || '?'} / {price.output || '?'}
+      {onSale ? (
+        <span
+          className={cn(
+            'rounded-sm px-1 py-0.5 text-[0.62rem] font-semibold',
+            isCurrent ? 'bg-primary-foreground/20' : 'bg-amber-500/15 text-amber-700 dark:text-amber-400'
+          )}
+        >
+          -{price.discount_percent}%
+        </span>
+      ) : null}
+      <span>
+        {price.input || '?'} / {price.output || '?'}
+      </span>
+      {onSale ? (
+        <span
+          className={cn(
+            'line-through decoration-from-font opacity-70',
+            isCurrent ? 'text-primary-foreground/60' : 'text-muted-foreground/80'
+          )}
+        >
+          {copy.wasPrice} {price.was_input || '?'} / {price.was_output || '?'}
+        </span>
+      ) : null}
     </span>
   )
 }

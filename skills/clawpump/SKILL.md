@@ -1,12 +1,14 @@
 ---
 name: clawpump
-description: "ClawPump on Solana — create/chat with agents, trade, perps, DCA, lend, launch tokens, marketplace, predictions, gift cards, agent email, intelligence via mcp_clawpump_* tools. Use when the user mentions ClawPump, launching a token, an agent's wallet/balance, swaps, perps, gift cards, agent email, or DeFi on Solana."
+description: "Operate ClawPump agents and Solana finance tools."
 version: 1.3.0
+author: ClawPump
+license: MIT
 platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [clawpump, solana, defi, trading, perps, dca, lending, token-launch, marketplace, predictions, gift-cards, agent-mail, agents, mcp]
-    related_skills: [mcp, pay-sh]
+    related_skills: [pay-sh]
 ---
 
 # ClawPump

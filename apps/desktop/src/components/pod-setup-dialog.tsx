@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 
-import { getPodWallets, provisionPod, type PodWallet } from '../hermes'
+import { getPodWallets, type PodWallet, provisionPod } from '../hermes'
 import { notify } from '../store/notifications'
 
 import { InlineNotice } from './notifications'
@@ -72,7 +72,10 @@ export function PodSetupDialog({
   const canFund = !busy && Boolean(agentId) && Number.isFinite(amountNum) && amountNum > 0 && !insufficient
 
   const fund = async () => {
-    if (!canFund) return
+    if (!canFund) {
+      return
+    }
+
     setBusy(true)
     setError(null)
     try {
@@ -184,10 +187,10 @@ export function PodSetupDialog({
                 <span className="font-medium">Amount to fund (USDC)</span>
                 <Input
                   inputMode="decimal"
-                  onChange={e => setAmount(e.target.value)}
-                  type="number"
                   min="0"
+                  onChange={e => setAmount(e.target.value)}
                   step="1"
+                  type="number"
                   value={amount}
                 />
                 <span className="text-xs text-muted-foreground">

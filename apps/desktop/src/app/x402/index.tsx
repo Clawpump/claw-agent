@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 
-import { searchX402, type X402Result } from '@/hermes'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { writeClipboardText } from '@/components/ui/copy-button'
 import { Input } from '@/components/ui/input'
+import { searchX402, type X402Result } from '@/hermes'
 import { Check, Copy, ExternalLink, Loader2, Search, Zap } from '@/lib/icons'
 import { $pendingChatPrompt } from '@/store/composer'
 import { notifyError } from '@/store/notifications'
@@ -49,7 +49,7 @@ export function X402View({ setStatusbarItemGroup: _setStatusbarItemGroup, ...pro
     }
   }
 
-  const useInChat = (r: X402Result) => {
+  const openInChat = (r: X402Result) => {
     $pendingChatPrompt.set(buildPrompt(r))
     navigate(NEW_CHAT_ROUTE)
   }
@@ -149,7 +149,7 @@ export function X402View({ setStatusbarItemGroup: _setStatusbarItemGroup, ...pro
                   </div>
                 )}
 
-                <Button className="mt-2 w-full" onClick={() => useInChat(r)} size="sm" variant="outline">
+                <Button className="mt-2 w-full" onClick={() => openInChat(r)} size="sm" variant="outline">
                   Use in chat
                 </Button>
               </div>

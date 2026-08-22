@@ -52,6 +52,9 @@ export const ja = defineLocale({
     revealInSidebar: 'ファイルツリーで表示',
     copyPath: 'パスをコピー',
     copyRelativePath: '相対パスをコピー',
+    download: 'ダウンロード',
+    downloadSaved: '保存しました',
+    downloadFailed: 'ダウンロードに失敗しました',
     rename: '名前を変更…',
     delete: '削除',
     renameTitle: '名前を変更',
@@ -68,6 +71,7 @@ export const ja = defineLocale({
       connectingGateway: 'ライブデスクトップゲートウェイに接続中',
       loadingSettings: 'Claw Agent の設定を読み込み中',
       loadingSessions: '最近のセッションを読み込み中',
+      retryingRemoteBackend: 'リモート Claw Agent バックエンドに再接続中…',
       startingDesktopConnection: 'デスクトップ接続を開始中',
       startingHermesDesktop: 'Claw Agent Desktop を起動中…'
     },
@@ -97,7 +101,15 @@ export const ja = defineLocale({
       remoteSignInHint: signInLabel =>
         `保存済みのリモートブラウザセッションからサインアウトし、${signInLabel}を開きます。代わりにバンドルされたバックエンドに切り替えるには「ローカルゲートウェイを使用」を選択してください。`,
       signOutAndSignIn: 'サインアウトして再サインイン',
-      remoteFailureHint: '「ゲートウェイ設定」でゲートウェイの URL とサインインを確認するか、ローカルゲートウェイに切り替えてください。',
+      remoteFailureHint:
+        '「ゲートウェイ設定」でゲートウェイの URL とサインインを確認するか、ローカルゲートウェイに切り替えてください。',
+      cloudDownTitle: 'Nous Cloud エージェントが停止しています',
+      cloudDownDescription:
+        'このゲートウェイが接続している Nous 管理のクラウドエージェントがサーバーエラーを返しています。ここから再起動することはできません。ステータスを確認するか、ローカルゲートウェイに切り替えるか、サポートに連絡してください。',
+      cloudDownHint:
+        '下のボタンから Nous Portal（インスタンスの状態と操作）を開くか、Discord でサポートを受けられます。',
+      cloudDownCheckPortal: 'Portal のステータスを確認',
+      cloudDownDiscord: 'Discord でサポートを受ける',
       hideRecentLogs: '最近のログを非表示',
       showRecentLogs: '最近のログを表示',
       signedInTitle: 'サインインしました',
@@ -128,10 +140,21 @@ export const ja = defineLocale({
     updateHermes: 'Claw Agent を更新',
     updateReadyTitle: '更新の準備ができました',
     updateReadyMessage: count => `${count} 件の新しい変更が利用可能です。`,
+    updateReadyMessageUnknown: '新しい更新が利用可能です。',
     seeWhatsNew: '新機能を見る',
+    mcp: {
+      needsAuthTitle: 'MCP サーバーの再認証が必要です',
+      needsAuthMessage: name => `${name} MCP の再認証が必要です。`,
+      errorTitle: 'MCP サーバーに接続できません',
+      errorMessage: name => `${name} MCP のヘルスチェックに失敗しました。`,
+      signIn: 'サインイン',
+      view: '表示'
+    },
     errors: {
       elevenLabsNeedsKey: 'ElevenLabs STT には ELEVENLABS_API_KEY が必要です。',
       elevenLabsRejectedKey: 'ElevenLabs が API キーを拒否しました (401)。',
+      diskFull: 'ディスク容量不足です — 空きを作ってからもう一度お試しください。',
+      gatewayAuthFailed: 'ゲートウェイ認証に失敗しました — API_SERVER_KEY を確認してください。',
       methodNotAllowed:
         'デスクトップバックエンドがそのリクエストを拒否しました (405 Method Not Allowed)。Claw Agent Desktop を再起動してください。',
       microphonePermission: 'マイクのアクセス許可が拒否されました。',
@@ -153,6 +176,7 @@ export const ja = defineLocale({
       noSpeechDetected: '音声が検出されませんでした',
       playbackFailed: '音声再生に失敗しました',
       recordingFailed: '音声録音に失敗しました',
+      sayStopToEnd: phrase => `「${phrase}」と言うと音声チャットを終了できます。`,
       transcriptionFailed: '音声文字起こしに失敗しました',
       transcriptionUnavailable: '音声文字起こしはまだ利用できません。',
       tryRecordingAgain: 'もう一度録音してください。',
@@ -165,10 +189,11 @@ export const ja = defineLocale({
       inputTitle: '入力が必要です',
       inputBody: 'Claw Agent が応答を待っています。',
       turnDoneTitle: 'Claw Agent が完了しました',
-      turnDoneBody: '応答の準備ができました。',
+      turnDoneBody: '',
       turnErrorTitle: 'ターンが失敗しました',
       backgroundDoneTitle: 'バックグラウンドタスクが完了しました',
-      backgroundFailedTitle: 'バックグラウンドタスクが失敗しました'
+      backgroundFailedTitle: 'バックグラウンドタスクが失敗しました',
+      creditsTitle: 'クレジット'
     }
   },
 
@@ -177,15 +202,48 @@ export const ja = defineLocale({
       `ソフトウェアレンダリングが有効です — リモートディスプレイを検出しました（${reason}）。ちらつきを防ぐため GPU アクセラレーションは無効化されています。`
   },
 
+  billingBlock: {
+    titleNous: 'Nous クレジットが不足しています',
+    titleProvider: provider => `クレジット不足 — ${provider}`,
+    fallbackMessage: 'アカウントのクレジットが不足しています。続行するにはクレジットを追加してください。',
+    openBilling: '請求を開く',
+    addCredits: 'クレジットを追加',
+    dismiss: '閉じる'
+  },
+
+  sendDiagnostics: {
+    title: 'Nous に診断情報を送信',
+    privacyNotice:
+      'デバッグバンドルを Nous 内部ストレージにアップロードします（公開ペーストではありません）。システム情報（OS、バージョン、プロバイダー、設定済み API キーの種類 — キー自体は含まれません）と、エージェント/ゲートウェイ/デスクトップの完全なログ（各最大 512 KB。会話内容、ツール出力、ファイルパスを含む可能性が高い）が含まれます。シークレットはアップロード前にマスクされます。閲覧できるのは Nous スタッフと許可された Discord モデレーターのみで、14 日後に自動削除されます。',
+    upload: 'アップロード',
+    uploading: 'アップロード中…',
+    cancel: 'キャンセル',
+    close: '閉じる',
+    copyLink: 'リンクをコピー',
+    uploadIdFallback: id => `表示リンクが返されませんでした — サポートにアップロード ID ${id} をお伝えください`,
+    doneTitle: '診断情報を送信しました',
+    doneDescription:
+      'バンドルは非公開でアップロードされました。サポートスレッドで以下のリンクを共有すると、チームがログを確認できます。',
+    failedTitle: 'アップロードに失敗しました',
+    failedHint:
+      'ターミナルから `hermes debug share --nous` を実行するか、`hermes debug share --local` でアップロードせずにレポートを表示することもできます。',
+    handoffLead: '続きは次の場所で:',
+    links: {
+      github: 'GitHub Issues',
+      portal: 'Nous Portal サポート',
+      discord: 'Discord'
+    }
+  },
+
   titlebar: {
     hideSidebar: 'サイドバーを非表示',
     showSidebar: 'サイドバーを表示',
     search: '検索',
     searchTitle: 'セッション、ビュー、アクションを検索',
     swapSidebarSides: 'サイドバーの向きを切り替え',
-    swapSidebarSidesTitle: 'セッションとファイルブラウザーの位置を入れ替える',
     hideRightSidebar: '右サイドバーを非表示',
     showRightSidebar: '右サイドバーを表示',
+    unreadSessions: count => (count === 1 ? '未読セッション 1 件' : `未読セッション ${count} 件`),
     muteHaptics: '触覚フィードバックをオフ',
     unmuteHaptics: '触覚フィードバックをオン',
     openSettings: '設定を開く',
@@ -214,20 +272,23 @@ export const ja = defineLocale({
       providers: 'プロバイダー',
       providerAccounts: 'アカウント',
       providerApiKeys: 'API キー',
+      providerCustomEndpoints: 'カスタムエンドポイント',
       gateway: 'ゲートウェイ',
       apiKeys: 'ツールとキー',
+      keybinds: 'キーボードショートカット',
       keysTools: 'ツール',
       keysSettings: '設定',
       mcp: 'MCP',
       archivedChats: 'アーカイブ済みチャット',
       about: '情報',
+      billing: '請求',
       notifications: '通知'
     },
     notifications: {
       title: '通知',
       intro: 'アプリ内トーストとは別の、ネイティブのデスクトップ通知です。設定は端末ごとに保存されます。',
       enableAll: '通知を有効にする',
-      enableAllDesc: 'マスタースイッチ。オフにすると以下のすべての通知を無効にします。',
+      enableAllDesc: 'オフで以下の通知をすべて無効にします。',
       focusedHint: '完了通知は Claw Agent がバックグラウンドにあるときのみ表示されます。',
       kinds: {
         approval: {
@@ -244,11 +305,19 @@ export const ja = defineLocale({
         },
         turnError: {
           label: 'ターン失敗',
-          description: 'ターンがエラーで終了しました。'
+          description: 'バックグラウンドのターンエラー。'
         },
         backgroundDone: {
           label: 'バックグラウンドタスク完了',
           description: 'バックグラウンドのターミナルコマンドが完了しました。'
+        },
+        credits: {
+          label: 'クレジット通知',
+          description: 'クレジットの利用が停止または復旧しました。'
+        },
+        plugin: {
+          label: 'プラグイン通知',
+          description: 'Claw Agent がバックグラウンドの間に、デスクトッププラグインが通知を送信しました。'
         }
       },
       test: 'テスト通知を送信',
@@ -292,11 +361,55 @@ export const ja = defineLocale({
       colorModeDesc: '固定モードを選ぶか、Claw Agent をシステム設定に合わせます。',
       toolViewTitle: 'ツール呼び出しの表示',
       toolViewDesc: 'プロダクト表示は生のツールペイロードを隠し、テクニカル表示は入出力をすべて表示します。',
+      reasoningCollapsedTitle: '思考ブロックをデフォルトで折りたたむ',
+      reasoningCollapsedDesc: 'ストリーミング中の推論を、開くまで折りたたんだまま利用できるようにします。',
       uiScaleTitle: 'UI スケール',
       uiScaleDesc: (percent: number) =>
         `アプリ全体の文字と UI を拡大縮小します。Cmd/Ctrl と +、-、0 でも変更できます。現在: ${percent}%`,
+      sessionDensityTitle: 'セッションリストの密度',
+      sessionDensityDesc: 'サイドバーのセッションタイトルの下に表示する情報量を選びます。',
+      sessionDensityCompact: 'コンパクト',
+      sessionDensityComfortable: '標準',
+      sessionDensityDetailed: '詳細',
+      tabStripTitle: 'タブバー',
+      tabStripDesc: 'ゾーンの上にタブを表示します。自動ではペインが1つのときに隠します。',
+      tabStripAuto: '自動',
+      tabStripAlways: '常に表示',
+      tabStripNever: '表示しない',
+      terminalFontTitle: 'ターミナルフォント',
+      terminalFontDesc:
+        'Desktop のターミナルで使用するインストール済みフォントを選びます。Nerd Font は Powerlevel10k とシェルアイコンを表示できます。空欄では内蔵の JetBrains Mono を使用します。',
+      terminalFontPlaceholder: 'MesloLGS NF または CSS フォントスタック',
+      terminalFontPreview: 'グリフのプレビュー',
+      terminalFontReset: '既定値を使用',
       translucencyTitle: 'ウィンドウの透過',
-      translucencyDesc: 'ウィンドウ全体を透過させてデスクトップを表示します。macOS と Windows のみ。',
+      translucencyDesc: 'テキストも含めウィンドウ全体を透過させてデスクトップを表示します。',
+      translucencyGlassDesc: 'マットガラス: デスクトップが滑らかなぼかしとして透け、テキストは鮮明なまま。',
+      translucencyModeClear: 'クリア',
+      translucencyModeGlass: 'ガラス',
+      translucencyTintTitle: '色味',
+      translucencyFadeTitle: 'フェード',
+      translucencyFrostTitle: 'くもりの質感',
+      translucencyFrost: {
+        'under-window': '深い',
+        popover: 'やわらか',
+        titlebar: '明るい',
+        header: 'まぶしい'
+      },
+      translucencyScopeTitle: '適用範囲',
+      translucencyScope: {
+        window: 'ウィンドウ全体',
+        sidebar: 'サイドバーのみ'
+      },
+      backdropTitle: 'チャット背景',
+      backdropDesc: '会話の背後に表示される淡い彫像の画像。',
+      introSplashTitle: 'イントロ表示',
+      introSplashDesc: '空のチャットに表示されるワードマークとプロンプト。',
+      reactionsTitle: 'メッセージリアクション',
+      reactionsDesc:
+        'iMessage風の絵文字タップバック — メッセージにリアクションでき、Claw Agentもあなたのメッセージにリアクションします。',
+      composerPopoutTitle: 'フローティング入力欄',
+      composerPopoutDesc: '入力欄をドックからドラッグして外せるようにします。オフにすると画面下部に固定されます。',
       embedsTitle: 'インライン埋め込み',
       embedsDesc:
         'リッチプレビューは第三者サイト（YouTube、X など）から読み込まれます。確認は許可するまでプレースホルダーを表示し、常には自動で読み込み、オフはリンクのままにします。',
@@ -325,9 +438,9 @@ export const ja = defineLocale({
       pet: {
         title: 'ペット',
         intro:
-          'アプリ上に浮かぶ petdex のアニメーションマスコットを採用しましょう。ツール実行中は走り、成功すると喜び、エラーでしょんぼりと、Hermes の状態に反応します。',
+          'アプリ上に浮かぶ petdex のアニメーションマスコットを採用しましょう。ツール実行中は走り、成功すると喜び、エラーでしょんぼりと、Claw Agent の状態に反応します。',
         restartHint:
-          'ペット機能には再起動が必要です。この機能が追加される前に起動したアプリが動作中です。Hermes を終了して再度開き、このページに戻ってください。',
+          'ペット機能には再起動が必要です。この機能が追加される前に起動したアプリが動作中です。Claw Agent を終了して再度開き、このページに戻ってください。',
         scaleTitle: 'サイズ',
         scaleDesc: '浮遊マスコットの大きさを変更します。すべての画面に即時反映されます。',
         roamTitle: '散歩',
@@ -371,6 +484,11 @@ export const ja = defineLocale({
       display: {
         personality: '人格',
         showReasoning: '推論ブロック'
+      },
+      desktop: {
+        repoScanEnabled: 'リポジトリの自動検出',
+        repoScanRoots: 'リポジトリの検索ルート',
+        repoScanExcludePaths: '除外するリポジトリパス'
       },
       agent: {
         maxTurns: '最大エージェントステップ',
@@ -460,7 +578,12 @@ export const ja = defineLocale({
         },
         xai: {
           voiceId: 'xAI (Grok) 音声',
-          language: 'xAI 言語'
+          language: 'xAI 言語',
+          speed: '再生速度',
+          autoSpeechTags: '自動音声タグ',
+          optimizeStreamingLatency: 'ストリーミング遅延最適化',
+          sampleRate: 'サンプルレート',
+          bitRate: 'ビットレート'
         },
         minimax: {
           model: 'MiniMax TTS モデル',
@@ -522,6 +645,11 @@ export const ja = defineLocale({
         personality: '新しいセッションのデフォルトのアシスタントスタイルです。',
         showReasoning: 'バックエンドが推論内容を提供したときに表示します。'
       },
+      desktop: {
+        repoScanEnabled: 'ローカルフォルダを検索して Git リポジトリをプロジェクトに表示します。',
+        repoScanRoots: '検索するフォルダです。空の場合はホームディレクトリを検索します。',
+        repoScanExcludePaths: 'リポジトリ検出時に除外するフォルダとその配下です。'
+      },
       timezone:
         'Claw Agent がローカル時刻のコンテキストを必要とするときに使用します。空欄ならシステムのタイムゾーンを使います。',
       agent: {
@@ -575,6 +703,10 @@ export const ja = defineLocale({
       heading: 'Claw Agent Desktop',
       version: value => `バージョン ${value}`,
       versionUnavailable: 'バージョンを取得できません',
+      bundleOutOfSync: 'アプリのビルドが古くなっています',
+      bundleOutOfSyncDesc:
+        'Claw Agent ランタイムは更新されましたが、デスクトップアプリ自体は古いビルドのままです。アプリを更新するまで、新しいインターフェース機能(Bot Mode など)は表示されません。下の更新を実行してアプリを再ビルドしてください。それでもこの警告が消えない場合は、最新のデスクトップインストーラーから再インストールしてください。',
+      bundleOutOfSyncAction: 'インストーラーを入手',
       updates: '更新',
       checkNow: '今すぐ確認',
       checking: '確認中…',
@@ -587,6 +719,7 @@ export const ja = defineLocale({
       cantReach: '更新サーバーに接続できませんでした。',
       tapCheck: '更新を探すには「今すぐ確認」を押してください。',
       updateReady: count => `新しい更新の準備ができました (${count} 件の変更を含みます)。`,
+      updateReadyUnknown: '新しい更新の準備ができました。',
       lastChecked: age => `前回確認: ${age}`,
       justNowSuffix: ' · たった今',
       automaticUpdates: '自動更新',
@@ -601,15 +734,31 @@ export const ja = defineLocale({
     config: {
       none: 'なし',
       noneParen: '(なし)',
+      builtinOnly: '内蔵のみ',
       notSet: '未設定',
       commaSeparated: 'カンマ区切りの値',
+      searchPlaceholder: '検索…',
+      noResults: '結果が見つかりません',
+      systemDefault: 'システムのデフォルト',
       loading: 'Claw Agent の設定を読み込み中...',
       emptyTitle: '設定項目がありません',
       emptyDesc: 'このセクションには調整できる設定がありません。',
       failedLoad: '設定の読み込みに失敗しました',
       autosaveFailed: '自動保存に失敗しました',
       imported: '設定をインポートしました',
-      invalidJson: '設定 JSON が無効です'
+      invalidJson: '設定 JSON が無効です',
+      keepAwakeTitle: 'コンピューターをスリープさせない',
+      keepAwakeDesc: '本体のスリープを防ぎ、長時間や夜通しの実行を継続します。画面は暗転できます。'
+    },
+    quickEntry: {
+      enabledTitle: 'クイック入力',
+      enabledDesc:
+        'グローバルショートカットで小さな入力欄をどこからでも呼び出し、Claw Agent を開かずにプロンプトを送信します。',
+      shortcutTitle: 'クイック入力のショートカット',
+      shortcutDesc: '修飾キーが 1 つ以上必要です（例: CommandOrControl+Shift+Space）。',
+      active: 'ショートカットは有効です。',
+      takenBy: 'このショートカットは他のアプリが使用しています。別のものを選んでください。',
+      invalidShortcut: '有効なショートカットではありません。修飾キーを 1 つ以上含めてください。'
     },
     credentials: {
       pasteKey: 'キーを貼り付け',
@@ -622,8 +771,9 @@ export const ja = defineLocale({
       saving: '保存中'
     },
     envActions: {
-      actionsFor: label => `${label} のアクション`,
-      credentialActions: '認証情報のアクション',
+      actions: 'アクション',
+
+      manageInKeys: 'API キーで管理',
       docs: 'ドキュメント',
       hideValue: '値を非表示',
       revealValue: '値を表示',
@@ -638,12 +788,7 @@ export const ja = defineLocale({
       title: 'ゲートウェイ接続',
       envOverride: 'env オーバーライド',
       intro:
-        'Claw Agent Desktop はデフォルトで独自のローカルゲートウェイを起動します。別のマシンや信頼できるプロキシの背後で既に動作している Claw Agent バックエンドをこのアプリで制御する場合は、リモートゲートウェイを使用してください。以下でプロファイルを選択して、それぞれのリモートホストを設定します。',
-      appliesTo: '適用対象',
-      allProfiles: 'すべてのプロファイル',
-      defaultConnection: '独自のオーバーライドがないすべてのプロファイルのデフォルト接続。',
-      profileConnection: profile =>
-        `"${profile}" がアクティブプロファイルのときのみ使用される接続。ローカルに設定するとデフォルトを継承します。`,
+        'Claw Agent Desktop はデフォルトで独自のローカルゲートウェイを起動します。別のマシンや信頼できるプロキシの背後で既に動作している Claw Agent バックエンドをこのアプリで制御する場合は、リモートゲートウェイを使用してください。ゲートウェイ接続はマシン単位の設定で、プロファイルは接続したゲートウェイから検出されます。',
       envOverrideTitle: '環境変数がこのデスクトップセッションを制御しています。',
       envOverrideDesc:
         '保存された設定を使用するには HERMES_DESKTOP_REMOTE_URL と HERMES_DESKTOP_REMOTE_TOKEN の設定を解除してください。',
@@ -677,6 +822,13 @@ export const ja = defineLocale({
       existingToken: value => `既存のトークン ${value}`,
       savedToken: '保存済み',
       pasteSessionToken: 'セッショントークンを貼り付け',
+      plainTextConfirmTitle: 'ゲートウェイトークンを平文で保存しますか？',
+      plainTextConfirmDesc:
+        'このマシンで OS のキーリングサービスが見つからなかったため、トークンはアプリの接続設定ファイルに暗号化されずに保存され、このユーザーとして実行される任意のプロセスから読み取れる状態になります。暗号化して保存するには、GNOME Keyring または KWallet をインストールまたは有効化してください。',
+      plainTextConfirmAction: '平文で保存',
+      plainTextStoredTitle: 'トークンは平文で保存されています',
+      plainTextStoredDesc:
+        'セキュアストレージが利用できないため、保存済みのトークンはこのマシンのアプリの接続設定ファイルに暗号化されずに保存されています。暗号化するには GNOME Keyring または KWallet をインストールまたは有効化してください。',
       testRemote: 'リモートをテスト',
       saveForRestart: '次回起動時のために保存',
       saveAndReconnect: '保存して再接続',
@@ -702,12 +854,57 @@ export const ja = defineLocale({
       signOutFailed: 'サインアウトに失敗しました',
       testFailed: 'リモートゲートウェイのテストに失敗しました',
       applyFailed: 'ゲートウェイ設定を適用できませんでした',
-      saveFailed: 'ゲートウェイ設定を保存できませんでした'
+      saveFailed: 'ゲートウェイ設定を保存できませんでした',
+      sshTitle: 'SSH で接続',
+      sshDesc:
+        'Claw Agent は SSH 経由でリモート上に起動され、このアプリにトンネルされます。リモート側で何かを起動・公開する必要はありません。ホストへの鍵ベースの SSH アクセスが前提です。',
+      sshTrustHint: '初回に提示されたホスト鍵を信頼して固定し、以後の変更は拒否します。',
+      sshHostTitle: 'ホスト',
+      sshHostDesc: 'user@host、または ~/.ssh/config の Host エイリアス。',
+      sshHostPick: 'ホストを選択…',
+      sshHostPickTitle: 'ホスト',
+      sshHostPickDesc: '~/.ssh/config の Host エイリアス、または「カスタム」で手入力。',
+      sshHostCustom: 'カスタム（手入力）…',
+      sshUserTitle: 'ユーザー',
+      sshUserDesc: '空欄 = ~/.ssh/config または現在のユーザー。',
+      sshUserPlaceholder: '~/.ssh/config から',
+      sshPortTitle: 'ポート',
+      sshPortDesc: '空欄 = 22 または ~/.ssh/config のポート。',
+      sshKeyTitle: '鍵ファイル',
+      sshKeyDesc: '秘密鍵のパス。空欄 = ssh-agent または ~/.ssh/config。',
+      sshHermesPathTitle: 'Claw Agent パス（任意）',
+      sshHermesPathDesc: 'リモートの hermes バイナリへのフルパス。空欄 = 自動検出。',
+      sshHermesPathPlaceholder: '自動検出',
+      sshTestConnection: 'SSH をテスト',
+      sshConnect: '接続',
+      sshButtonsHint: '「保存」は次回起動時に適用され、「接続」は今すぐ再接続します。',
+      sshReachable: (host, platform) => `接続可能: ${host}（${platform}）— Claw Agent を検出`,
+      sshIncompleteHost: '接続する前に SSH ホストを入力してください。',
+      sshErrUnreachable: 'SSH でそのホストに到達できませんでした。ホスト、ポート、ネットワークを確認してください。',
+      sshErrAuth:
+        'SSH 認証に失敗しました。鍵を ssh-agent に読み込む（ssh-add）か、~/.ssh/config に IdentityFile を設定してください。Claw Agent は非対話的に ssh を実行します。',
+      sshErrHostKey:
+        '前回の接続以降、ホスト鍵が変更されています。想定どおりか確認し、ssh-keygen -R <host> を実行してから再接続してください。',
+      sshErrNotInstalled:
+        'リモートホストに Claw Agent がインストールされていません。リモートでインストールする（curl -fsSL https://hermes-agent.nousresearch.com/install.sh | sh）か、Claw Agent パスを設定してください。',
+      sshErrPlatform:
+        'サポートされていないリモートプラットフォームです。Claw Agent Desktop の SSH モードは Linux、macOS、Windows のリモートホストに対応しています。',
+      sshErrTimeout: 'SSH 接続がタイムアウトしました。ホストが到達不能、またはスリープ中の可能性があります。',
+      sshErrUpdateRequired: 'Desktop SSH で接続する前に、リモートホストの Claw Agent を更新してください。',
+      sshErrUnknown: 'SSH 接続に失敗しました。'
     },
     keys: {
       loading: 'API キーと認証情報を読み込み中...',
       failedLoad: 'API キーの読み込みに失敗しました',
       empty: 'このカテゴリーにはまだ設定がありません。'
+    },
+    search: {
+      placeholder: 'すべての設定を検索...',
+      pill: '検索'
+    },
+    profileScope: {
+      appliesTo: '適用対象',
+      editsProfile: profile => `このページの変更は「${profile}」プロファイルに適用されます。`
     },
     mcp: {
       loading: 'MCP サーバーを読み込み中...',
@@ -738,6 +935,9 @@ export const ja = defineLocale({
       saveServer: 'サーバーを保存',
       capabilitySummary: (tools, prompts, resources) =>
         `${[`ツール ${tools} 個`, ...(prompts ? [`プロンプト ${prompts} 個`] : []), ...(resources ? [`リソース ${resources} 個`] : [])].join('、')} を有効化`,
+      costTokens: tokens => `1 呼び出しあたり約 ${tokens} トークン`,
+      usage30d: uses => `過去 30 日で ${uses} 回使用`,
+      unusedPill: '未使用',
       statusConnecting: '接続中…',
       statusNeedsAuth: '認証が必要です',
       statusError: 'エラー',
@@ -750,7 +950,28 @@ export const ja = defineLocale({
       unsavedConnect: '未保存 — 接続するには mcp.json を保存してください。',
       enableTool: tool => `${tool} を有効化`,
       disableTool: tool => `${tool} を無効化`,
-      noOutput: 'まだ出力がありません。'
+      noOutput: 'まだ出力がありません。',
+      deepLinkTitle: 'MCP サーバーを追加しますか？',
+      deepLinkDescription:
+        'リンクがこの MCP サーバーを Claw Agent に追加するよう要求しました。下の設定はリンク側から来たものです。内容を必ず確認してください。',
+      deepLinkStdioWarning:
+        'このサーバーは下記のコマンドでローカルプロセスを実行します。提供元を信頼できる場合のみ続行してください。',
+      deepLinkConfirm: 'サーバーを追加',
+      deepLinkNameInvalid: '名前は 1〜64 文字の英数字、ドット、ハイフン、アンダースコアです。',
+      deepLinkNameConflict: name =>
+        `${name} という名前のサーバーは既に存在します。別の名前にするかキャンセルしてください。`,
+      deepLinkErrorTitle: 'MCP インストールリンクを拒否しました',
+      deepLinkErrorName: 'リンクのサーバー名が欠落しているか無効です。',
+      deepLinkErrorConfig: 'リンクの設定が有効な base64 エンコード JSON ではありません。',
+      deepLinkErrorShape:
+        '設定は文字列の `url` または `command` フィールドを持つ JSON オブジェクトである必要があります。',
+      deepLinkErrorUrl: 'サーバー URL は http:// と https:// のみ許可されます。',
+      deepLinkErrorTooLarge: '設定ペイロードが 32KB の上限を超えています。',
+      importButton: 'インポート',
+      importPlaceholder: 'mcp.json スニペット、npx/docker コマンド、claude mcp add 行、URL、Cursor リンクを貼り付け…',
+      importNoMatch: '貼り付けたテキストからサーバー設定を認識できませんでした。',
+      importConfirm: 'mcp.json に追加',
+      importConfirmMany: count => `${count} 件のサーバーを mcp.json に追加`
     },
     model: {
       loading: 'モデル設定を読み込み中...',
@@ -795,6 +1016,10 @@ export const ja = defineLocale({
       noProviderKeys: '利用可能なプロバイダー API キーがありません。',
       searchKeys: 'プロバイダーを検索…',
       noKeysMatch: '一致するプロバイダーがありません。',
+      localEndpoint: {
+        title: 'ローカル / カスタムエンドポイント',
+        description: 'OpenAI 互換のエンドポイント（Zyphra、vLLM、llama.cpp、Ollama など）を指定します。'
+      },
       loading: 'プロバイダーを読み込み中...'
     },
     sessions: {
@@ -809,6 +1034,12 @@ export const ja = defineLocale({
       messages: count => `${count} 件のメッセージ`,
       restored: '復元しました',
       deleteConfirm: title => `"${title}" を完全に削除しますか？この操作は元に戻せません。`,
+      autoArchiveTitle: '古いチャットを自動アーカイブ',
+      autoArchiveDesc:
+        'しばらく操作していないチャットを自動的にアーカイブします。ピン留めしたチャットはアーカイブされず、削除もされません。アーカイブされたチャットはここに移動します。',
+      autoArchiveDaysLabel: 'アーカイブまでの日数',
+      autoArchiveDaysUnit: '日間操作なし',
+      autoArchiveFailed: '自動アーカイブを更新できませんでした',
       defaultDirTitle: 'デフォルトのプロジェクトディレクトリ',
       defaultDirDesc:
         '別のフォルダーを選択しない限り、新しいセッションはこのフォルダーで開始します。未設定の場合はホームディレクトリが使用されます。',
@@ -844,18 +1075,56 @@ export const ja = defineLocale({
         'このツールセットにはプロバイダーのオプションがありません。有効にすれば現在の設定で動作します。',
       noProviders: '現在このツールセットに利用可能なプロバイダーがありません。',
       ready: '準備完了',
+      needsSignIn: 'サインインが必要',
+      needsSetup: 'セットアップが必要',
+      activeBackend: '使用中',
+      activeBackendHint: 'これが現在アクティブなバックエンドです',
+      useBackend: 'このバックエンドを使う',
       nousIncluded: 'Nous サブスクリプションに含まれています。有効にするには Nous Portal にサインインしてください。',
+      nousAuthNeededTitle: 'Nous Portal にサインイン',
+      nousAuthNeededMessage: provider =>
+        `${provider} は保存されましたが、Nous Portal にサインインするまで有効になりません。`,
+      nousAuthSignIn: 'サインイン',
+      nousAuthDoneTitle: 'Nous Portal に接続しました',
+      nousAuthDoneMessage: 'サブスクリプションのバックエンドが有効になりました。',
+      nousAuthFailed: 'Nous Portal のサインインが完了しませんでした',
       noApiKeyRequired: 'API キーは不要です。',
       postSetupHint: step =>
         `このバックエンドは一度だけインストールが必要です (${step})。このマシン上で実行され、数分かかる場合があります。`,
+      postSetupInstalledHint: 'インストール済みです。問題がある場合のみセットアップを再実行してください。',
       postSetupRun: 'セットアップを実行',
+      postSetupRerun: 'セットアップを再実行',
+      postSetupInstalled: 'インストール済み',
       postSetupRunning: 'インストール中…',
       postSetupStarting: '開始中…',
       postSetupCompleteTitle: 'セットアップ完了',
       postSetupCompleteMessage: step => `${step} をインストールしました。`,
       postSetupErrorTitle: 'セットアップはエラーで終了しました',
       postSetupErrorMessage: step => `${step} のログを確認してください。`,
-      postSetupFailed: step => `${step} のセットアップの実行に失敗しました`
+      postSetupFailed: step => `${step} のセットアップの実行に失敗しました`,
+      webSearchActive: backend => `検索: ${backend}`,
+      webExtractActive: backend => `抽出: ${backend}`,
+      webCapabilityUnset: '未設定',
+      webUseForSearch: '検索に使用',
+      webUseForExtract: '抽出に使用',
+      webUsedForSearch: '検索バックエンド',
+      webUsedForExtract: '抽出バックエンド',
+      webCapabilitySelectedMessage: (provider, capability) =>
+        `${provider} がウェブ${capability === 'search' ? '検索' : '抽出'}を担当します。`,
+      failedSelectCapability: provider => `${provider} の設定に失敗しました`,
+      terminalBackend: {
+        sectionTitle: '実行バックエンド',
+        loading: '実行バックエンドを確認中…',
+        failedLoad: 'ターミナルバックエンドの読み込みに失敗しました',
+        ready: '準備完了',
+        needsSetup: 'セットアップが必要',
+        unavailable: '利用不可',
+        inUse: '使用中',
+        selectedTitle: 'バックエンドを選択しました',
+        selectedMessage: backend => `ターミナルコマンドは ${backend} で実行されます。新しいセッションに適用されます。`,
+        failedSelect: backend => `${backend} の選択に失敗しました`,
+        needsSetupHint: 'このバックエンドは今すぐ選択できますが、セットアップが完了するまでコマンドは失敗します。'
+      }
     }
   },
 
@@ -876,9 +1145,12 @@ export const ja = defineLocale({
     noDescription: '説明はありません。',
     configured: '設定済み',
     needsKeys: 'キーが必要',
+    visionModelHint:
+      'ビジョンは補助モデル設定を使用します。画像対応モデルはそこで選択され、ここでプロバイダーごとに選ぶものではありません。',
+    visionModelLink: '設定 → モデル でビジョンモデルを選択',
     toolsetsEnabled: (enabled, total) => `${enabled}/${total} ツールセットが有効`,
     configureToolset: label => `${label} を設定`,
-    toggleToolset: label => `${label} ツールセットを切り替え`,
+    toggleToolset: (label, enabled) => `${label} ツールセットを${enabled ? 'オン' : 'オフ'}にする`,
     skillsLoadFailed: 'スキルの読み込みに失敗しました',
     toolsetsRefreshFailed: 'ツールセットの更新に失敗しました',
     skillEnabled: 'スキルを有効にしました',
@@ -926,7 +1198,7 @@ export const ja = defineLocale({
     loadFailed: 'メモリグラフを読み込めませんでした',
     loading: '読み込み中…',
     emptyTitle: 'まだ学習はありません',
-    emptyDesc: 'Hermes がスキルやメモリを蓄積すると、ここに表示されます。'
+    emptyDesc: 'Claw Agent がスキルやメモリを蓄積すると、ここに表示されます。'
   },
   agents: {
     close: 'エージェントを閉じる',
@@ -953,6 +1225,7 @@ export const ja = defineLocale({
     ageSeconds: seconds => `${seconds}秒前`,
     ageMinutes: minutes => `${minutes}分前`,
     ageHours: hours => `${hours}時間前`,
+    ageDays: days => `${days}日前`,
     durationSeconds: seconds => `${seconds}秒`,
     durationMinutes: (minutes, seconds) => `${minutes}分 ${seconds}秒`,
     tokens: value => `${value} トーク`
@@ -977,14 +1250,14 @@ export const ja = defineLocale({
       placeholder: 'ペットを検索…',
       loading: 'petdex ギャラリーを読み込み中…',
       error: 'petdex ギャラリーに接続できません。',
-      staleBackend: 'ペット機能を使うには Hermes を再起動してください。',
+      staleBackend: 'ペット機能を使うには Claw Agent を再起動してください。',
       empty: '一致するペットがありません。',
       turnOff: 'オフ',
       turnOn: 'オン',
       installed: 'インストール済み',
       generatedTag: '生成',
       adoptFailed: 'ペットを採用できませんでした。',
-      toggleFailed: 'ペットを切り替えできませんでした。',
+      toggleFailed: enabled => `ペットを${enabled ? 'オン' : 'オフ'}にできませんでした。`,
       noneAvailable: '利用可能なペットがありません。'
     },
     generatePet: {
@@ -1004,8 +1277,8 @@ export const ja = defineLocale({
       hatchComposing: 'まとめています…',
       hatchSaving: 'もうすぐです…',
       namePlaceholder: 'ペットに名前を付ける',
-      staleBackend: 'ペットを生成するには Hermes を更新してください。',
-      backgroundHint: 'このウィンドウは閉じても大丈夫です。完了したら Hermes が通知します。',
+      staleBackend: 'ペットを生成するには Claw Agent を更新してください。',
+      backgroundHint: 'このウィンドウは閉じても大丈夫です。完了したら Claw Agent が通知します。',
       slowProviderHint: '数分かかることがあります',
       remix: 'リミックス',
       remixConfirmTitle: 'この見た目でリミックスしますか？',
@@ -1063,8 +1336,10 @@ export const ja = defineLocale({
     gatewayStopped: 'メッセージングゲートウェイが停止中',
     hermesActiveSessions: (version, count) => `Claw Agent ${version} · アクティブセッション ${count}`,
     restartGateway: 'ゲートウェイを再起動',
+    openBrowser: 'ブラウザを開く',
     gatewayRestartFailed: 'ゲートウェイの再起動に失敗しました。',
     updateHermes: 'Claw Agent を更新',
+    reloadWindow: 'ウィンドウを再読み込み',
     actionRunning: '実行中',
     actionDone: '完了',
     actionFailed: '失敗',
@@ -1240,13 +1515,22 @@ export const ja = defineLocale({
     search: 'プロファイルを検索...',
     loading: 'プロファイルを読み込み中...',
     newProfile: '新しいプロファイル',
+    importProfile: 'プロファイルをインポート…',
+    exportProfile: 'プロファイルをエクスポート…',
+    imported: 'プロファイルをインポートしました',
+    exported: 'プロファイルをエクスポートしました',
+    failedImport: 'プロファイルのインポートに失敗しました',
+    failedExport: 'プロファイルのエクスポートに失敗しました',
     allProfiles: 'すべてのプロファイル',
     showAllProfiles: 'すべてのプロファイルを表示',
     switchToProfile: name => `${name} に切り替え`,
+    switchToConnection: name => `${name} に切り替え`,
+    switchConnectionFailed: name => `${name} に接続できませんでした`,
     manageProfiles: 'プロファイルを管理…',
-    actionsFor: name => `${name} のアクション`,
+    actions: 'アクション',
+
     color: 'カラー…',
-    colorFor: name => `${name} のカラー`,
+    colorFor: 'カラー',
     setColor: color => `カラー ${color} に設定`,
     autoColor: '自動',
     noProfiles: 'プロファイルが見つかりません。',
@@ -1315,6 +1599,13 @@ export const ja = defineLocale({
     close: 'Cron を閉じる',
     title: 'スケジュール済みジョブ',
     count: count => `${count} 件のジョブ`,
+    modelImpact: {
+      title: 'スケジュール済みジョブの確認が必要です',
+      message: count => `モデル設定を確認するまで、${count} 件のスケジュール済みジョブがスキップされます。`,
+      detailMore: (names, remaining) => `${names}、ほか ${remaining} 件`,
+      review: 'スケジュール済みジョブを確認',
+      saveFailed: 'Claw Agent はモデルの変更を保存しませんでした。'
+    },
     search: 'Cron ジョブを検索...',
     loading: 'Cron ジョブを読み込み中...',
     states: {
@@ -1381,7 +1672,7 @@ export const ja = defineLocale({
     showRuns: '実行履歴を表示',
     hideRuns: '実行履歴を隠す',
     runHistory: '実行履歴',
-    actionsFor: title => `${title} のアクション`,
+
     actionsTitle: 'Cron ジョブのアクション',
     resume: '再開',
     pause: '一時停止',
@@ -1415,6 +1706,9 @@ export const ja = defineLocale({
     promptPlaceholder: '実行ごとにエージェントが行う内容は？',
     frequencyLabel: '頻度',
     deliverLabel: '配信先',
+    deliverNeedsHomeChannel: '先にホームチャンネルを設定してください',
+    modelLabel: 'モデル',
+    modelDefault: 'デフォルト（グローバルモデル）',
     customScheduleLabel: 'カスタムスケジュール',
     customPlaceholder: '0 9 * * * または weekdays at 9am',
     customHint: 'Cron 式、または「every hour」「weekdays at 9am」のようなフレーズ。',
@@ -1424,7 +1718,25 @@ export const ja = defineLocale({
     scheduleRequired: 'スケジュールは必須です。',
     scriptOnlyEditHint: 'スクリプトのみのジョブ（AI プロンプトなし）。ジョブ ID:',
     saveChanges: '変更を保存',
-    createAction: 'Cron を作成'
+    createAction: 'Cron を作成',
+    tabs: {
+      jobs: 'ジョブ',
+      blueprints: 'ブレーンプリント'
+    },
+    blueprints: {
+      tab: 'ブレーンプリント',
+      startFrom: '開始点',
+      custom: 'カスタム',
+      subtitle: 'すぐに使える自動化',
+      dialogDesc: '詳細を入力してスケジュールします。',
+      scheduleIt: 'スケジュールする',
+      scheduling: 'スケジュール中...',
+      scheduled: 'ブレーンプリントをスケジュールしました',
+      loading: 'ブレーンプリントを読み込み中...',
+      failedLoad: 'ブレーンプリントの読み込みに失敗しました',
+      emptyTitle: '利用できるブレーンプリントはありません',
+      emptyDesc: 'このバックエンドで利用できる自動化ブレーンプリントはありません。'
+    }
   },
 
   artifacts: {
@@ -1462,12 +1774,33 @@ export const ja = defineLocale({
     copyPath: 'パスをコピー'
   },
 
+  artifactCard: {
+    kind: { code: 'コード', html: 'インタラクティブページ', svg: 'グラフィック' },
+    generating: lines => `生成中… ${lines} 行`,
+    versionBadge: count => `${count} 個のバージョン`,
+    open: '開く'
+  },
+
+  artifactPreview: {
+    versionOf: (current, total) => `${total} 中 v${current}`,
+    olderVersion: '前のバージョン',
+    newerVersion: '次のバージョン',
+    latest: '最新',
+    copyContent: 'コンテンツをコピー',
+    download: 'ダウンロード',
+    openInBrowser: 'ブラウザで開く',
+    openInBrowserFailed: 'ブラウザで開けませんでした',
+    missingTitle: 'アーティファクトを利用できません',
+    missingBody: 'このアーティファクトはローカルレジストリに存在しません。'
+  },
+
   sidebar: {
     nav: {
       'new-session': '新しいセッション',
       skills: 'スキルとツール',
       messaging: 'メッセージング',
-      artifacts: 'アーティファクト'
+      artifacts: 'アーティファクト',
+      cron: 'スケジュール済みジョブ'
     },
     searchAria: 'セッションを検索',
     searchPlaceholder: 'セッションを検索…',
@@ -1486,11 +1819,12 @@ export const ja = defineLocale({
     allPinned: 'ここにあるものはすべてピン留めされています。チャットのピン留めを解除すると最近のものに表示されます。',
     shiftClickHint: 'Shift クリックでピン留め · ドラッグで並べ替え',
     noWorkspace: 'ワークスペースなし',
-    noProject: 'プロジェクトなし',
     projectEmpty: 'セッションはまだありません',
     noSessions: 'セッションはまだありません',
+    noFilterMatches: 'このフィルターに一致するセッションはありません',
     projects: {
       sectionLabel: 'プロジェクト',
+      home: 'ホーム',
       newButton: '新規プロジェクト',
       createTitle: '新規プロジェクト',
       createDesc: 'ワークスペースに名前を付け、1つ以上のフォルダを追加します。',
@@ -1508,7 +1842,7 @@ export const ja = defineLocale({
       primaryBadge: 'メイン',
       removeFolder: '削除',
       create: '作成',
-      menu: 'プロジェクト操作',
+      menu: 'アクション',
       menuRename: '名前を変更',
       menuAppearance: '外観',
       noColor: '色なし',
@@ -1520,9 +1854,9 @@ export const ja = defineLocale({
       removeFromSidebar: 'サイドバーから削除',
       createFailed: 'プロジェクトを作成できませんでした',
       staleBackend:
-        'プロジェクトを作成するには Hermes バックエンドを更新してください。バックエンドがこのデスクトップアプリより古いです（設定 → 更新 → バックエンド）。',
+        'プロジェクトを作成するには Claw Agent バックエンドを更新してください。バックエンドがこのデスクトップアプリより古いです（設定 → 更新 → バックエンド）。',
       deleteConfirm:
-        'Hermes から保存済みプロジェクトを削除します。ファイル・git リポジトリ・ワークツリーはそのまま残ります。',
+        'Claw Agent から保存済みプロジェクトを削除します。ファイル・git リポジトリ・ワークツリーはそのまま残ります。',
       startWork: '新しいワークツリー',
       newWorktreeTitle: '新しいワークツリー',
       newWorktreeDesc: 'このワークツリーのブランチ名を入力してください。',
@@ -1531,6 +1865,11 @@ export const ja = defineLocale({
       baseBranchPlaceholder: 'ブランチを検索…',
       baseBranchNone: 'ブランチが見つかりません',
       startWorkFailed: 'ワークツリーを作成できませんでした',
+      worktreeStaleBackend:
+        'このリモート接続でワークツリーを作成するには Claw Agent バックエンドを更新してください — git ワークツリー API 以前のバージョンです。',
+      worktreeProjectLabel: 'プロジェクト',
+      worktreeProjectPlaceholder: 'プロジェクトを検索…',
+      worktreeProjectNone: 'フォルダのあるプロジェクトがありません',
       convertBranch: 'ブランチを変換…',
       convertBranchTitle: 'ブランチを変換',
       convertBranchDesc: 'チェックアウト済みのブランチを開くか、空いているブランチのワークツリーを作成します。',
@@ -1539,6 +1878,7 @@ export const ja = defineLocale({
       branchOpenExisting: '開く',
       branchSwitchHome: 'ホームを切替',
       branchCreateWorktree: '新しいワークツリー',
+      branchTrackRemote: 'リモートを追跡',
       branchesLoading: 'ブランチを読み込み中…',
       noBranches: 'ブランチが見つかりません',
       removeWorktree: 'ワークツリーを削除',
@@ -1555,31 +1895,57 @@ export const ja = defineLocale({
     loading: '読み込み中…',
     loadMore: 'さらに読み込む',
     loadCount: step => `さらに ${step} 件を読み込む`,
+    messageCount: count => `${count} 件のメッセージ`,
+    toolCallCount: count => `${count} 件のツール呼び出し`,
     row: {
       pin: 'ピン留め',
       unpin: 'ピン留めを解除',
+      markUnread: '未読にする',
+      markRead: '既読にする',
+      unreadFailed: '未読状態を更新できませんでした',
       copyId: 'ID をコピー',
       export: 'エクスポート',
       branchFrom: '分岐',
       rename: '名前を変更',
       archive: 'アーカイブ',
       newWindow: '新しいウィンドウ',
+      openInTerminal: 'ターミナルで開く',
       copyIdFailed: 'セッション ID をコピーできませんでした',
-      actionsFor: title => `${title} のアクション`,
+
       sessionActions: 'セッションアクション',
       sessionRunning: 'セッション実行中',
       needsInput: '入力が必要です',
       waitingForAnswer: '回答を待っています',
+      finishedUnread: '完了 — 未読',
+      backgroundRunning: 'バックグラウンドタスク実行中',
+      draftSession: '下書き — 未送信',
       handoffOrigin: platform => `${platform} から引き継ぎ`,
+      ownedByProfile: profile => `プロファイル: ${profile}`,
       renamed: '名前を変更しました',
       renameFailed: '名前の変更に失敗しました',
       renameTitle: 'セッションの名前を変更',
-      renameDesc: 'このチャットにわかりやすいタイトルをつけてください。空欄にするとクリアされます。',
+      renameDesc: '空欄にするとクリアされます。',
       untitledPlaceholder: '無題のセッション',
+      deleteTitle: 'セッションを削除しますか？',
+      deleteDesc: title => `「${title}」を完全に削除します。この操作は元に戻せません。`,
+      deleting: '削除中…',
+      deleted: 'セッションを削除しました',
+      untitledChat: id => `セッション ${id}`,
       ageNow: 'たった今',
       ageDay: '日',
       ageHour: '時間',
       ageMin: '分'
+    },
+    dateDivider: {
+      today: '今日の早い時間',
+      yesterday: '昨日',
+      thisWeek: '今週',
+      lastWeek: '先週',
+      thisMonth: '今月'
+    },
+    statusDivider: {
+      working: '実行中',
+      done: '完了'
     }
   },
 
@@ -1608,6 +1974,7 @@ export const ja = defineLocale({
       '調整または続行'
     ],
     startVoice: '音声会話を開始',
+    openDirective: '開く',
     queueMessage: 'メッセージをキューに入れる',
     stop: '停止',
     send: '送信',
@@ -1624,9 +1991,13 @@ export const ja = defineLocale({
     endShort: '終了',
     stopDictation: '口述を停止',
     transcribingDictation: '口述を文字起こし中',
+    voiceControls: '音声',
     voiceDictation: '音声口述',
     speakReplies: '返信を読み上げる',
     stopSpeakingReplies: '返信の読み上げを停止',
+    wakeWordListening: phrase => `ウェイクワード:「${phrase}」— 待機中`,
+    wakeWordOff: phrase => `ウェイクワード:「${phrase}」— オフ`,
+    wakeWordPausedVoice: phrase => `ウェイクワード:「${phrase}」— 音声チャット中は一時停止`,
     lookupLoading: '検索中…',
     lookupNoMatches: '一致なし。',
     lookupTry: '試す',
@@ -1658,6 +2029,7 @@ export const ja = defineLocale({
     urlHintPre: '完全な URL を入力してください。例: ',
     attach: '添付',
     queued: count => `${count} 件キュー済み`,
+    queuedPaused: count => `${count} 件キュー済み — 一時停止中`,
     attachmentOnly: '添付のみのターン',
     emptyTurn: '空のターン',
     attachments: count => `${count} 件の添付`,
@@ -1665,8 +2037,11 @@ export const ja = defineLocale({
     editingQueuedInComposer: 'コンポーザーでキュー済みターンを編集中',
     queueEdit: '編集',
     queueSendNext: '次に送信',
+    queueSteer: 'ステア — 現在のターンを今すぐ修正',
     queueSend: '送信',
     queueDelete: '削除',
+    queueResume: '再開',
+    queueResumeTip: '停止により一時停止中 — キュー済みターンの送信を再開します',
     queueStuckTitle: 'キュー内のメッセージを送信できません',
     queueStuckBody:
       'キューに入れたターンの送信が繰り返し失敗しました。まだキューに残っています。もう一度送信してください。',
@@ -1717,6 +2092,10 @@ export const ja = defineLocale({
   statusStack: {
     agents: 'エージェント',
     background: count => `バックグラウンド ${count} 件`,
+    goalActive: '目標進行中',
+    goalDone: '目標達成',
+    goalPaused: '目標一時停止中',
+    goalWaiting: '目標待機中',
     subagents: count => `サブエージェント ${count} 件`,
     todos: (done, total) => `タスク ${done}/${total}`,
     running: '実行中',
@@ -1753,13 +2132,14 @@ export const ja = defineLocale({
       scopeLastTurn: '前のターン',
       commit: 'コミット',
       commitAndPush: 'コミットしてプッシュ',
-      commitPlaceholder: 'メッセージ（⌘↵ でコミット）',
+      commitPlaceholder: shortcut => `メッセージ（${shortcut} でコミット）`,
       generateCommitMessage: 'コミットメッセージを生成',
       stopGenerating: '生成を停止',
       createPr: 'PR を作成',
       openPr: 'PR を開く',
       ghMissing: 'PR を開くには GitHub CLI (gh) をインストールしてサインインしてください',
-      agentShip: 'Hermes にコミットと PR を任せる',
+      agentShip: 'Claw Agent にコミットと PR を任せる',
+      agentShipUnavailable: 'この変更を持つチャットが画面にありません。',
       agentShipPrompt:
         '現在の変更を確認し、分かりやすい Conventional Commits 形式でコミットし、ブランチをプッシュして、プルリクエストを作成してください。',
       newBranch: '新しいブランチ',
@@ -1819,7 +2199,29 @@ export const ja = defineLocale({
     applyingClose: 'このウィンドウは更新中に閉じ、その後 Claw Agent が自動的に再度開きます。',
     errorTitle: '更新が完了しませんでした',
     errorBody: 'ご安心ください。何も失われていません。今すぐ再試行できます。',
+    blockerTitle: 'Claw Agent を更新するためにローカルプレビューを閉じますか？',
+    blockerBody:
+      '更新する前に、これらのローカルプレビューを停止する必要があります。ファイルが変更または削除されることはありません。',
+    foreignBlockerTitle: '他のプロセスを閉じて Claw Agent を更新',
+    foreignBlockerBody:
+      'Claw Agent はこれらのプロセスを安全に自動終了できません。各プロセスを所有するアプリ、ターミナル、またはサービスを閉じてから、もう一度更新してください。',
+    mixedBlockerBody:
+      'Claw Agent は以下のローカルプレビューを閉じることができます。更新を続けるには、他のプロセスを手動で閉じる必要があります。',
+    closePreviewsAndUpdate: 'プレビューを閉じて更新',
+    closePreviewsAndCheckAgain: 'プレビューを閉じて再確認',
+    localPreview: 'ローカルプレビュー',
+    portLabel: port => `ポート ${port}`,
+    pidLabel: pid => `PID ${pid}`,
+    technicalDetails: '技術的な詳細',
     notNow: '今は後で',
+    clientAlsoBehindTitle: 'デスクトップアプリが古くなっています',
+    clientAlsoBehindMessage:
+      'バックエンドは最新ですが、このデスクトップアプリはまだ古いバージョンです。最新の修正を反映するには更新してください。',
+    clientAlsoBehindAction: 'デスクトップアプリを更新',
+    everythingDispatched: '更新を開始しました',
+    everythingSkipped: 'スキップ',
+    everythingRowFailed: '更新に失敗しました',
+    everythingFanoutFailedTitle: '他のインスタンスを更新できませんでした',
     applyStatus: {
       preparing: 'バックエンドを更新しています…',
       pulling: 'バックエンドを更新中…',
@@ -1847,8 +2249,45 @@ export const ja = defineLocale({
     viewDocs: 'インストールドキュメントを見る',
     installTo: 'インストール先',
     retryAfterRun: '実行しました — 再試行',
+    setupChoiceTitle: 'Claw Agent Desktop をセットアップ',
+    setupChoiceDesc:
+      'すでに実行している Claw Agent ゲートウェイに接続するか、このコンピューターに Claw Agent をローカルインストールします。',
+    connectExistingTitle: '既存の Claw Agent に接続',
+    connectExistingShort: '既存環境に接続',
+    connectExistingDesc:
+      'セッショントークンまたはブラウザーサインインでリモートバックエンドを使用します。ローカルインストールは開始されません。',
+    installLocalTitle: 'Claw Agent をローカルにインストール',
+    installLocalDesc: 'Claw Agent をダウンロードし、Python 環境を作成して、このコンピューターでバックエンドを実行します。',
+    localStartUnavailable:
+      'ローカルインストールを開始できません。Claw Agent Desktop を再起動して、もう一度お試しください。',
+    remoteSetupTitle: '既存の Claw Agent に接続',
+    remoteSetupDesc:
+      'ゲートウェイ URL を入力してください。Claw Agent Desktop がトークンとブラウザーサインインのどちらが必要かを検出します。',
+    remoteUrlTitle: 'ゲートウェイ URL',
+    remoteUrlDesc: 'Claw Agent ゲートウェイのベース URL を使用します。リモートの場合は https:// を含めてください。',
+    remoteUrlPlaceholder: 'https://gateway.example.com/hermes',
+    probing: 'ゲートウェイ認証方式を検出中...',
+    probeError: 'その Claw Agent ゲートウェイに到達できませんでした。',
+    identityProvider: 'ID プロバイダー',
+    authTitle: '認証',
+    authNeedsOauth: provider => `このゲートウェイをテストする前に ${provider} でサインインしてください。`,
+    authSignedIn: 'ブラウザーサインインが完了しました。',
+    connected: '接続済み',
+    signIn: 'サインイン',
+    signInWith: provider => `${provider} でサインイン`,
+    enterUrlFirst: '先にゲートウェイ URL を入力してください。',
+    signInIncomplete: '認証が完了する前にサインインウィンドウが閉じられました。',
+    tokenTitle: 'セッショントークン',
+    tokenDesc: 'リモートゲートウェイの .env ファイルからセッショントークンを貼り付けます。',
+    pasteSessionToken: 'セッショントークンを貼り付け',
+    incompleteSignInTest: 'OAuth で保護されたこのゲートウェイをテストする前にサインインしてください。',
+    incompleteTokenTest: 'このゲートウェイをテストする前にセッショントークンを入力してください。',
+    testConnection: '接続をテスト',
+    testSucceeded: (baseUrl, version) => `${baseUrl}${version ? ` (${version})` : ''} に接続しました。`,
+    applyRemote: '適用して再接続',
+    backToSetup: '戻る',
     failedTitle: 'インストールに失敗しました',
-    settingUpTitle: 'Claw Agent を設定中',
+    settingUpTitle: 'Claw Agent Agent を設定中',
     finishingTitle: '仕上げ中',
     failedDesc:
       'インストール手順のいずれかが失敗しました。Windows では、別の Claw Agent CLI またはデスクトップインスタンスが実行中の場合に発生することがあります。実行中の Claw Agent インスタンスをすべて停止してから再試行してください。詳細は以下またはデスクトップログで確認できます。',
@@ -1871,7 +2310,7 @@ export const ja = defineLocale({
   },
 
   onboarding: {
-    headerTitle: 'Claw Agent のセットアップをしましょう',
+    headerTitle: 'Claw Agent Agent のセットアップをしましょう',
     headerDesc: 'チャットを始めるにはモデルプロバイダーを接続してください。ほとんどのオプションはワンクリックです。',
     preparingInstall: 'Claw Agent はインストールを完了中です。初回実行では通常 1 分以内に完了します。',
     starting: 'Claw Agent を起動中…',
@@ -1883,6 +2322,7 @@ export const ja = defineLocale({
     recommended: '推奨',
     connected: '接続済み',
     featuredPitch: '1 つのサブスクリプションで 300 以上の最先端モデル — Claw Agent を実行するための推奨方法',
+    fireworksPitch: '直接モデル API — Fireworks がホストする最先端モデル',
     openRouterPitch: '1 つのキーで数百のモデル — 堅実なデフォルト',
     apiKeyOptions: {
       fireworks: {
@@ -1912,7 +2352,6 @@ export const ja = defineLocale({
     flowSubtitles: {
       pkce: 'ブラウザーを開いてサインインし、ここに戻ります',
       device_code: 'ブラウザーで確認ページを開きます — Claw Agent が自動接続します',
-      loopback: 'サインインのためブラウザーを開きます — Claw Agent が自動接続します',
       external: 'ターミナルで一度サインインして、チャットに戻ります'
     },
     startingSignIn: provider => `${provider} のサインインを開始中...`,
@@ -1960,7 +2399,8 @@ export const ja = defineLocale({
     proNeedsSubscription: 'Pro モデルには有料の Nous サブスクリプションが必要です。',
     free: '無料',
     freeTier: '無料プラン',
-    priceTitle: '100 万トークンあたりの入力/出力価格'
+    priceTitle: '100 万トークンあたりの入力/出力価格',
+    wasPrice: '旧価格'
   },
 
   modelVisibility: {
@@ -1979,8 +2419,7 @@ export const ja = defineLocale({
       noModels: 'モデルが見つかりません',
       editModels: 'モデルを編集…',
       refreshModels: 'モデルを更新',
-      fast: '高速',
-      medium: '中'
+      fast: '高速'
     },
     modelOptions: {
       noOptions: 'このモデルにはオプションがありません',
@@ -2007,6 +2446,7 @@ export const ja = defineLocale({
       inferenceNotReady: '推論準備未完了',
       checkingInference: '推論を確認中',
       disconnected: '切断済み',
+      reconnectGateway: 'ゲートウェイに再接続',
       openSystem: 'システムパネルを開く',
       connection: label => `接続: ${label}`,
       recentActivity: '最近のアクティビティ',
@@ -2032,6 +2472,12 @@ export const ja = defineLocale({
       desktopVersion: version => `Claw Agent Desktop v${version}`,
       backendVersion: version => `バックエンド v${version}`,
       clientLabel: version => `クライアント v${version}`,
+      connectionSsh: host => `SSH: ${host}`,
+      connectionRemote: host => `リモート: ${host}`,
+      connectionCloud: host => `クラウド: ${host}`,
+      connectionCloudTooltip: host => `Hermes Cloud · ${host}`,
+      connectionSshTooltip: host => `SSH · ${host}`,
+      connectionRemoteTooltip: host => `Remote · ${host}`,
       backendLabel: version => `バックエンド v${version}`,
       commit: sha => `コミット ${sha}`,
       branch: branch => `ブランチ ${branch}`,
@@ -2046,7 +2492,7 @@ export const ja = defineLocale({
       gatewayConnecting: '接続中',
       gatewayOffline: 'オフライン',
       gatewayRestarting: '再起動中…',
-      gatewayTitle: 'Claw Agent 推論ゲートウェイのステータス',
+      gatewayTitle: 'ゲートウェイ',
       agents: 'エージェント',
       closeAgents: 'エージェントを閉じる',
       openAgents: 'エージェントを開く',
@@ -2058,7 +2504,6 @@ export const ja = defineLocale({
       starmap: 'メモリグラフ',
       openStarmap: 'メモリグラフを開く',
       turnRunning: '実行中',
-      currentTurnElapsed: '現在のターン経過時間',
       contextUsage: 'コンテキスト使用状況',
       contextUsagePanel: {
         categories: {
@@ -2077,15 +2522,14 @@ export const ja = defineLocale({
         title: 'コンテキスト使用状況',
         tokenSummary: (used, max) => `${used} / ${max} Tokens`
       },
-      openContextUsage: 'コンテキスト使用状況の内訳を開く',
       session: 'セッション',
-      runtimeSessionElapsed: 'ランタイムセッション経過時間',
-      yoloOn: 'YOLO オン — 危険なコマンドを自動承認中。クリックでオフに。Shift+クリックで全体に切り替え。',
-      yoloOff: 'YOLO オフ — クリックで危険なコマンドを自動承認。Shift+クリックで全体に切り替え。',
+      yoloOn: 'YOLO オン — 危険なコマンドを自動承認中。Shift+クリックで全体に切り替え。',
+      yoloOff: 'YOLO オフ。Shift+クリックで全体に切り替え。',
       modelNone: 'なし',
       noModel: 'モデルなし',
       switchModel: 'モデルを切り替え',
       openModelPicker: 'モデルピッカーを開く',
+      modelPinned: '手動で固定中 — 新しいチャットは設定のデフォルトではなくこのモデルを使用します',
       modelTitle: (provider, model) => `モデル · ${provider}: ${model}`,
       providerModelTitle: (provider, model) => `${provider} · ${model}`
     }
@@ -2101,7 +2545,7 @@ export const ja = defineLocale({
     remotePickerTitle: 'リモートフォルダーを選択',
     remotePickerDescription: '接続中のバックエンド上のフォルダーを参照します。',
     remotePickerSelect: 'フォルダーを選択',
-    folderTip: cwd => `${cwd} — クリックしてフォルダーを変更`,
+    folderTip: cwd => cwd,
     openFolder: 'フォルダーを開く',
     refreshTree: 'ツリーを更新',
     collapseAll: 'すべてのフォルダーを折りたたむ',
@@ -2130,10 +2574,6 @@ export const ja = defineLocale({
 
   preview: {
     tab: 'プレビュー',
-    closeTab: label => `${label} を閉じる`,
-    closeOthers: '他を閉じる',
-    closeToRight: '右側を閉じる',
-    closeAll: 'すべて閉じる',
     closePane: 'プレビューペインを閉じる',
     loading: 'プレビューを読み込み中',
     unavailable: 'プレビューは利用できません',
@@ -2187,6 +2627,8 @@ export const ja = defineLocale({
     web: {
       appFailedToBoot: 'プレビューアプリの起動に失敗しました',
       serverNotFound: 'サーバーが見つかりません',
+      remoteLoopback:
+        'このアドレスはエージェントを実行しているマシンを指しており、このマシンではありません。ブラウザペインはページをローカルで読み込むため、リモートの開発サーバーにはポート転送か到達可能なホスト名が必要です。',
       failedToLoad: 'プレビューの読み込みに失敗しました',
       tryAgain: '再試行',
       restarting: 'Claw Agent を再起動中...',
@@ -2200,6 +2642,12 @@ export const ja = defineLocale({
       showConsole: 'プレビューコンソールを表示',
       hideDevTools: 'プレビュー DevTools を非表示',
       openDevTools: 'プレビュー DevTools を開く',
+      goBack: '戻る',
+      goForward: '進む',
+      reload: 'ページを再読み込み',
+      address: 'アドレス',
+      addressPlaceholder: 'アドレスを入力',
+      blankPageBody: '上のアドレス欄に入力するか、Claw Agent にページを開くよう頼んでください。',
       finishedRestarting: message =>
         `Claw Agent がプレビューサーバーの再起動を完了しました${message ? `: ${message}` : ''}`,
       failedRestarting: message => `サーバーの再起動に失敗しました: ${message}`,
@@ -2223,6 +2671,75 @@ export const ja = defineLocale({
     }
   },
 
+  zones: {
+    showTabStrip: 'タブを表示',
+    hideTabStrip: 'タブを隠す',
+    showStripTab: title => `${title} を表示`,
+    hideStripTab: title => `${title} を隠す`,
+    lastTabKeptTitle: '最後のタブは残ります',
+    lastTabKeptBody:
+      'このゾーンには少なくとも 1 つの表示タブが必要です。先に別のタブを表示するか、サイドバー全体を折りたたんでください。',
+    toggleStripTab: title => `${title} タブを切り替え`,
+    minimize: '最小化',
+    restore: '復元',
+    reload: '再読み込み',
+    closeOthers: '他を閉じる',
+    closeToRight: '右側を閉じる',
+    closeAll: 'すべて閉じる',
+    newSessionTab: '新しいセッションタブ',
+    pluginDisabled: pluginId => `プラグイン「${pluginId}」を無効化しました`,
+    pluginDisabledBody: '設定 → プラグイン で再有効化するとペインが戻ります。',
+    missingPane: paneId => `ペインが見つかりません: ${paneId}`,
+    editTitle: 'レイアウト',
+    editHint: 'レイアウトを選ぶか、ペインをゾーン間へドラッグ。',
+    reset: 'リセット',
+    templates: 'テンプレート',
+    custom: 'カスタム',
+    newGridLayout: '新しいグリッドレイアウト',
+    saveCurrentAs: '現在の配置をテンプレートとして保存',
+    nameLayoutPlaceholder: 'レイアウト名を入力…',
+    deletePreset: name => `${name} を削除`,
+    zoneEditorTitle: 'ゾーンエディター',
+    editorHintPre: 'クリックで分割 · ',
+    editorHintPost: ' で線の向きを反転 · ゾーンをまたいでドラッグで結合 · 共有辺をドラッグでリサイズ',
+    templateColumns: '列',
+    templateRows: '行',
+    templateGrid: 'グリッド',
+    templatePriority: '優先',
+    zoneTag: index => `ゾーン ${index}`,
+    mergeZones: count => `${count} 個のゾーンを結合`,
+    customZoneName: count => `カスタム ${count} ゾーン`,
+    layoutNamePlaceholder: fallback => `レイアウト名（${fallback}）`,
+    saveApply: '保存して適用',
+    notExpressible: 'この配置は互いに噛み合っています（風車型）— 入れ子の分割では表現できません',
+    zoneCount: count => `${count} ゾーン`,
+    tabCount: count => `${count} 個のタブ`
+  },
+
+  contextMenu: {
+    link: {
+      openInApp: 'アプリ内ブラウザーで開く',
+      openExternal: '外部ブラウザーで開く',
+      copyUrl: 'URL をコピー',
+      copyResolvedUrl: '解決後の URL をコピー'
+    },
+    image: {
+      copyImage: '画像をコピー',
+      copyImageAddress: '画像アドレスをコピー',
+      saveImageAs: '画像を名前を付けて保存…'
+    },
+    edit: {
+      cut: '切り取り',
+      paste: '貼り付け',
+      selectAll: 'すべて選択',
+      addToDictionary: '辞書に追加'
+    },
+    page: {
+      copyPageUrl: 'ページの URL をコピー',
+      inspectElement: '要素を調査'
+    }
+  },
+
   assistant: {
     thread: {
       loadingSession: 'セッションを読み込み中',
@@ -2233,13 +2750,38 @@ export const ja = defineLocale({
           ? 'バックグラウンドタスクの完了後に再開します'
           : `${count} 件のバックグラウンドタスクの完了後に再開します`,
       thinking: '考え中',
+      thought: '思考済み',
+      thoughtBriefly: '少し思考',
+      thoughtFor: duration => `${duration} 思考`,
+      turnDuration: duration => `このターンの所要時間: ${duration}`,
       today: time => `今日 ${time}`,
       yesterday: time => `昨日 ${time}`,
       copy: 'コピー',
       refresh: '更新',
       moreActions: 'その他のアクション',
       branchNewChat: '新しいチャットでブランチ',
+      react: 'リアクション',
       dismissError: 'エラーを閉じる',
+      errorLayers: {
+        auth: '認証エラー',
+        billing: 'クレジット不足',
+        disk: 'ディスク容量不足',
+        endpoint: 'カスタムエンドポイントのエラー',
+        gateway: 'ゲートウェイのエラー',
+        generic: 'ターンが失敗しました',
+        provider: 'プロバイダーのエラー',
+        runtime: 'ローカルランタイムのエラー',
+        streaming: 'ストリーミング接続のエラー'
+      },
+      errorRetry: '再試行',
+      errorSwitchProvider: 'プロバイダーを切り替え',
+      errorOpenLogs: 'ログを開く',
+      errorOpenLogsFailed: 'ログフォルダを開けませんでした',
+      errorOpenDesktopLogs: 'デスクトップのログを開く',
+      errorCopyDiagnostics: 'エラー詳細をコピー',
+      errorSendDiagnostics: '診断情報を送信',
+      filesChanged: count => `${count} 件のファイルを変更`,
+      reviewChanges: 'レビュー',
       readAloudFailed: '読み上げに失敗しました',
       preparingAudio: '音声を準備中...',
       stopReading: '読み上げを停止',
@@ -2281,10 +2823,15 @@ export const ja = defineLocale({
       placeholder: '回答を入力…',
       skip: 'スキップ',
       skipped: 'スキップ済み',
-      continueLabel: '続行'
+      continueLabel: '続行',
+      confirmAndContinueLabel: '確定して続行',
+      answeredBadge: '回答済み',
+      questionProgress: (answered, total) => `${total}問中${answered}問回答済み`,
+      lateAnswer: (question, choice) => `「${question}」について — 私の回答: ${choice}`,
+      lateAnswerTip: 'この回答をフォローアップメッセージとして下書きします',
+      lateAnswerHint: 'この質問はもう回答を待っていません。選択肢を選ぶとフォローアップメッセージとして下書きされます。'
     },
     tool: {
-      code: 'コード',
       copyCode: 'コードをコピー',
       renderingImage: '画像をレンダリング中',
       copyOutput: '出力をコピー',
@@ -2306,6 +2853,7 @@ export const ja = defineLocale({
       statusError: 'エラー',
       statusRecovered: '回復しました',
       statusDone: '完了',
+      memoryWriteNoted: 'メモリへの書き込みを記録',
       actions: {
         read: '読み取り完了',
         reading: '読み取り中',
@@ -2359,6 +2907,11 @@ export const ja = defineLocale({
           done: 'ファイルを一覧表示しました',
           pending: 'ファイルを一覧表示中',
           pendingAction: '一覧表示中'
+        },
+        memory: {
+          done: 'メモリに保存しました',
+          pending: 'メモリに保存中',
+          pendingAction: '保存中'
         },
         patch: {
           done: 'ファイルにパッチを適用しました',
@@ -2424,6 +2977,7 @@ export const ja = defineLocale({
     stopFailed: '停止に失敗しました',
     regenerateFailed: '再生成に失敗しました',
     editFailed: '編集に失敗しました',
+    editTurnUnavailable: 'このターンはサーバー履歴にありません（圧縮で削除された可能性があります）。',
     resumeFailed: '再開に失敗しました',
     resumeStrandedTitle: 'このセッションを読み込めませんでした',
     resumeStrandedBody:
@@ -2494,7 +3048,7 @@ export const ja = defineLocale({
     sidebar: {
       title: 'サイドバー',
       description: 'モバイルサイドバーを表示します。',
-      toggle: 'サイドバーを切り替え'
+      toggle: open => `サイドバーを${open ? '表示' : '非表示'}`
     }
   }
 })

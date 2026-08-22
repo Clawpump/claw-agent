@@ -31,11 +31,13 @@ It is self-throttling: only one open sync PR at a time, and it no-ops when alrea
 
 ### One-time setup for full CI on sync PRs
 
-PRs opened with the default `GITHUB_TOKEN` do **not** trigger other workflows, so the repo's CI (tests / lint / branding) won't auto-run on a sync PR. To get CI as the merge gate, add a repo secret **`UPSTREAM_SYNC_PAT`** (a fine-scoped PAT with `repo` + `workflow`); the workflow uses it automatically. Without it, re-run CI on the sync PR manually.
+Add a repo secret named **`UPSTREAM_SYNC_PAT`**. Use either a classic PAT with `repo` + `workflow` scopes or a fine-grained PAT for this repository with Contents, Pull requests, and Workflows read/write access.
+
+The PAT is required whenever upstream changes `.github/workflows/**`; GitHub rejects those pushes from the fallback GitHub App token. It also lets the resulting sync PR trigger the repo's CI (tests / lint / branding). The fallback `GITHUB_TOKEN` only works for syncs that do not modify workflow files, and PRs opened with it do **not** trigger other workflows.
 
 ### Caveats
 
-- **`contributor-check`** requires every new commit-author email to be in `AUTHOR_MAP` (`scripts/release.py`). A sync that brings in commits from a *new* upstream contributor will fail this check until you add their mapping — the check prints the exact lines to paste.
+- **`contributor-check`** requires every new commit-author email to have a file in `contributors/emails/` (legacy mappings in `scripts/release.py` are still accepted). A sync that brings in commits from a *new* upstream contributor will fail this check until you add their mapping; run `python3 scripts/audit_pr_attribution.py --fix` and commit the generated files.
 - **`history-check`** requires a common ancestor with `main`; a real merge from our shared-history upstream always satisfies it.
 
 ## Manual sync (by hand)

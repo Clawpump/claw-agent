@@ -128,8 +128,9 @@ def _setup_stdio() -> int:
                     "Set it in ~/.hermes/.env first.", Colors.RED))
         return 1
 
-    import shutil
-    if not shutil.which("npx"):
+    from hermes_constants import find_node_executable
+
+    if not find_node_executable("npx"):
         print(color("  ⚠ 'npx' not found on PATH — install Node.js for the stdio transport.", Colors.YELLOW))
 
     print()

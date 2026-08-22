@@ -1,8 +1,9 @@
 ---
 name: dex-pools
-description: "Solana DEX liquidity, OHLCV candles, and venue discovery for any token/pool via GeckoTerminal (keyless). Use to sanity-check swap slippage, find the deepest venue, and read price history."
+description: "Inspect Solana DEX liquidity, venues, and OHLCV data."
 version: 1.0.0
 author: ClawPump (built on Hermes)
+license: MIT
 tags: [solana, dex, liquidity, ohlcv, geckoterminal, trading, defi, clawpump]
 platforms: [linux, macos, windows]
 prerequisites:

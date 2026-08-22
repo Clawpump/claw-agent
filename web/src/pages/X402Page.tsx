@@ -1,8 +1,9 @@
 import { useCallback, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { Check, Copy, ExternalLink, Search, Sparkles, Zap } from "lucide-react";
 import { api } from "@/lib/api";
 import type { X402Result } from "@/lib/api";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { Button } from "@nous-research/ui/ui/components/button";
 import { Badge } from "@nous-research/ui/ui/components/badge";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
@@ -24,13 +25,12 @@ function bestPrice(r: X402Result): string | null {
 function CopyButton({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
   const onCopy = useCallback(() => {
-    navigator.clipboard
-      .writeText(value)
-      .then(() => {
+    void copyTextToClipboard(value).then((ok) => {
+      if (ok) {
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
-      })
-      .catch(() => {});
+      }
+    });
   }, [value]);
   return (
     <button

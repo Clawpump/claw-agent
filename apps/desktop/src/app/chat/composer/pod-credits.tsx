@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 
-import { getPodStatus } from '@/hermes'
 import { Tip } from '@/components/ui/tooltip'
+import { getPodStatus } from '@/hermes'
 
 /**
  * Compact "Pod $X.XX" credits pill, shown in the composer control row only when
@@ -10,11 +10,17 @@ import { Tip } from '@/components/ui/tooltip'
  * indicator; top-ups go through the Set up Pod flow.
  */
 export function PodCredits({ provider }: { provider: string }) {
-  const isPod = provider === 'usepod'
+  if (provider !== 'usepod') {
+    return null
+  }
+
+  return <ConnectedPodCredits />
+}
+
+function ConnectedPodCredits() {
   const status = useQuery({
     queryKey: ['pod-status'],
     queryFn: getPodStatus,
-    enabled: isPod,
     staleTime: 30_000,
     refetchInterval: 60_000,
     // Keep the last result while a refetch is in flight so the credits readout
@@ -22,7 +28,7 @@ export function PodCredits({ provider }: { provider: string }) {
     placeholderData: prev => prev
   })
 
-  if (!isPod || !status.data?.connected) {
+  if (!status.data?.connected) {
     return null
   }
 

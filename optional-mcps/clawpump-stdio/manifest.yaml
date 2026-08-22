@@ -16,7 +16,7 @@ transport:
   command: npx
   args:
     - "-y"
-    - "@clawpump/agents"
+    - "@clawpump/agents@0.1.25"
 
 auth:
   type: api_key

@@ -45,9 +45,11 @@ jobs:
         with:
           fetch-depth: 0
           # A PAT (secret UPSTREAM_SYNC_PAT) lets the resulting PR trigger the
-          # repo's CI (tests / lint / branding) as the merge gate. Without it,
-          # github.token still works, but PRs it opens do NOT trigger other
-          # workflows, so you would re-run CI on the sync PR manually.
+          # repo's CI (tests / lint / branding) as the merge gate. It is also
+          # required whenever upstream changes .github/workflows/** because
+          # the GitHub App token cannot create or update workflow files.
+          # For syncs without workflow changes, github.token still works, but
+          # PRs it opens do NOT trigger other workflows.
           token: ${{ secrets.UPSTREAM_SYNC_PAT || github.token }}
 
       - name: Configure git
