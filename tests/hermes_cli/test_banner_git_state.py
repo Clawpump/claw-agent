@@ -49,6 +49,20 @@ def test_get_git_banner_state_reads_origin_and_head(tmp_path):
     assert state == {"upstream": "b2f477a3", "local": "af8aad31", "ahead": 3}
 
 
+def test_get_git_banner_state_prefers_bundled_revision():
+    """An npm bundle must not display git state from a stale profile checkout."""
+    from hermes_cli import banner
+
+    with (
+        patch.object(banner, "_bundled_build_revision", return_value="b2f477a3"),
+        patch.object(banner, "_resolve_repo_dir") as resolve_repo_dir,
+    ):
+        state = banner._compute_git_banner_state()
+
+    assert state == {"upstream": "b2f477a3", "local": "b2f477a3", "ahead": 0}
+    resolve_repo_dir.assert_not_called()
+
+
 def test_check_via_local_git_ssh_fastpath_ahead_not_behind(tmp_path):
     """SSH fast path must not report an ahead (carried) HEAD as behind.
 

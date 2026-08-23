@@ -9,6 +9,7 @@
 // inside the source tree (installer/ is a subdir of the fork), which cpSync
 // refuses. We exclude `installer` up front, so we never recurse into ourselves.
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -64,4 +65,21 @@ function copyDir(srcDir, dstDir, relDir) {
 fs.rmSync(OUT, { recursive: true, force: true });
 copyDir(FORK, OUT, "");
 fs.writeFileSync(path.join(OUT, ".claw-bundle"), "claw-agent npm bundle\n");
-console.log(`[build-bundle] bundled ${fileCount} files -> ${path.relative(PKG, OUT)}/`);
+
+let buildRevision;
+try {
+  buildRevision = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: FORK,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+} catch {
+  // A pre-bundled source tree may not contain .git. In that case copyDir()
+  // already preserved its existing .hermes_build_sha, if one was provided.
+}
+if (buildRevision && /^[0-9a-f]{40,64}$/i.test(buildRevision)) {
+  fs.writeFileSync(path.join(OUT, ".hermes_build_sha"), `${buildRevision}\n`);
+}
+
+const revisionLabel = buildRevision ? ` at ${buildRevision.slice(0, 8)}` : "";
+console.log(`[build-bundle] bundled ${fileCount} files${revisionLabel} -> ${path.relative(PKG, OUT)}/`);
