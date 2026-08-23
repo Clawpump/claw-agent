@@ -4,6 +4,7 @@ import { test } from 'vitest'
 import {
   FALLBACK_BRANCH,
   FALLBACK_COMMIT,
+  fromBuildFile,
   fromCI,
   fromFallback,
   fromLocalGit,
@@ -42,6 +43,16 @@ test('fromLocalGit reads HEAD + branch + dirty status', () => {
   assert.ok(calls.includes('git rev-parse HEAD'))
 })
 
+test('fromBuildFile reads a baked npm bundle revision', () => {
+  assert.deepEqual(fromBuildFile('/bundle', () => 'e'.repeat(40) + '\n'), {
+    commit: 'e'.repeat(40),
+    branch: 'main',
+    dirty: false,
+    source: 'bundle'
+  })
+  assert.equal(fromBuildFile('/bundle', () => 'not-a-sha'), null)
+})
+
 test('fromFallback uses the all-zero placeholder commit', () => {
   assert.deepEqual(fromFallback(), {
     commit: FALLBACK_COMMIT,
@@ -53,7 +64,7 @@ test('fromFallback uses the all-zero placeholder commit', () => {
   assert.equal(isFallbackCommit('a'.repeat(40)), false)
 })
 
-test('resolveStamp prefers CI over local git over fallback', () => {
+test('resolveStamp prefers CI over local git over bundle over fallback', () => {
   const ci = resolveStamp({
     env: { GITHUB_SHA: 'c'.repeat(40), GITHUB_REF_NAME: 'main' },
     execFn: () => 'should-not-run'
@@ -73,6 +84,15 @@ test('resolveStamp prefers CI over local git over fallback', () => {
   assert.equal(local.source, 'local')
   assert.equal(local.commit, 'd'.repeat(40))
   assert.equal(local.dirty, false)
+
+  const bundle = resolveStamp({
+    env: {},
+    execFn: () => null,
+    readFn: () => 'e'.repeat(40)
+  })
+  assert.equal(bundle.source, 'bundle')
+  assert.equal(bundle.commit, 'e'.repeat(40))
+  assert.equal(bundle.dirty, false)
 })
 
 test('resolveStamp falls back when neither CI nor git is available', () => {
