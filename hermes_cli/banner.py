@@ -397,9 +397,10 @@ def _check_via_local_git(repo_dir: Path) -> Optional[int]:
 def check_for_updates() -> Optional[int]:
     """Check whether a Hermes update is available.
 
-    Two paths: if ``HERMES_REVISION`` is set (nix builds embed it), compare
-    it to upstream main via ``git ls-remote``. Otherwise look for a local
-    git checkout and count commits behind ``origin/main``.
+    Two paths: if an immutable build revision is available (nix sets
+    ``HERMES_REVISION``; npm bundles bake ``.hermes_build_sha``), compare it
+    to upstream main via ``git ls-remote``. Otherwise look for a local git
+    checkout and count commits behind ``origin/main``.
 
     Returns the number of commits behind, ``UPDATE_AVAILABLE_NO_COUNT`` (-1)
     if behind but the count is unknown, ``0`` if up-to-date, or ``None`` if
@@ -407,7 +408,7 @@ def check_for_updates() -> Optional[int]:
     """
     hermes_home = get_hermes_home()
     cache_file = hermes_home / ".update_check"
-    embedded_rev = os.environ.get("HERMES_REVISION") or None
+    embedded_rev = os.environ.get("HERMES_REVISION") or _bundled_build_revision(short=0)
 
     # Docker images have no working tree to count commits against — the
     # published image excludes `.git` (see .dockerignore) and sets no
@@ -480,6 +481,18 @@ def _resolve_repo_dir() -> Optional[Path]:
     return repo_dir if (repo_dir / ".git").exists() else None
 
 
+def _bundled_build_revision(short: int = 0) -> Optional[str]:
+    """Return the baked revision only when running from the npm bundle."""
+    project_root = Path(__file__).parent.parent.resolve()
+    if not (project_root / ".claw-bundle").is_file():
+        return None
+    try:
+        from hermes_cli.build_info import get_build_sha
+        return get_build_sha(short=short)
+    except Exception:
+        return None
+
+
 def _git_short_hash(repo_dir: Path, rev: str) -> Optional[str]:
     """Resolve a git revision to an 8-character short hash."""
     try:
@@ -532,6 +545,10 @@ def get_git_banner_state(repo_dir: Optional[Path] = None) -> Optional[dict]:
 
 
 def _compute_git_banner_state(repo_dir: Optional[Path] = None) -> Optional[dict]:
+    if repo_dir is None:
+        bundled = _bundled_build_revision(short=8)
+        if bundled:
+            return {"upstream": bundled, "local": bundled, "ahead": 0}
     repo_dir = repo_dir or _resolve_repo_dir()
     if repo_dir is None:
         # No git checkout — try the baked build SHA (Docker image path).
