@@ -11,14 +11,15 @@
  *     "branch":        "<branch name>",
  *     "builtAt":       "<ISO 8601 UTC timestamp>",
  *     "dirty":         true|false,
- *     "source":        "ci" | "local" | "fallback"
+ *     "source":        "ci" | "local" | "bundle" | "fallback"
  *   }
  *
  * Source preference order:
  *   1. CI env vars ($GITHUB_SHA / $GITHUB_REF_NAME) -- avoid edge cases with
  *      shallow clones, detached HEADs, etc. in CI.
  *   2. Local `git rev-parse` against the parent repo (../..).
- *   3. Fallback stamp for local/personal builds from non-git source trees
+ *   3. Baked `.hermes_build_sha` from immutable npm bundles.
+ *   4. Fallback stamp for local/personal builds from non-git source trees
  *      (ZIP extract, interrupted clone with no HEAD, etc.).
  *
  * Dev / out-of-repo builds without git produce an explicit fallback stamp
@@ -26,7 +27,7 @@
  * commit as unpinned and follows the branch instead of fetching a fake SHA.
  */
 
-import { mkdirSync, writeFileSync } from "fs"
+import { mkdirSync, readFileSync, writeFileSync } from "fs"
 import { resolve, join, relative } from "path"
 import { execSync } from "child_process"
 
@@ -83,6 +84,26 @@ export function fromLocalGit(repoRoot = REPO_ROOT, execFn = tryExec) {
   }
 }
 
+export function fromBuildFile(
+  repoRoot = REPO_ROOT,
+  readFn = readFileSync,
+  branch = FALLBACK_BRANCH
+) {
+  let sha
+  try {
+    sha = readFn(join(repoRoot, ".hermes_build_sha"), "utf8").trim()
+  } catch {
+    return null
+  }
+  if (!/^[0-9a-f]{40}$/i.test(sha)) return null
+  return {
+    commit: sha,
+    branch: branch || FALLBACK_BRANCH,
+    dirty: false,
+    source: "bundle"
+  }
+}
+
 export function fromFallback(branch = FALLBACK_BRANCH) {
   // Non-git builds (ZIP download, bootstrap installer without a resolvable
   // HEAD) cannot determine a real commit.  Use a placeholder so local /
@@ -105,9 +126,15 @@ export function resolveStamp({
   env = process.env,
   repoRoot = REPO_ROOT,
   execFn = tryExec,
+  readFn = readFileSync,
   fallbackBranch = FALLBACK_BRANCH
 } = {}) {
-  return fromCI(env) || fromLocalGit(repoRoot, execFn) || fromFallback(fallbackBranch)
+  return (
+    fromCI(env) ||
+    fromLocalGit(repoRoot, execFn) ||
+    fromBuildFile(repoRoot, readFn, fallbackBranch) ||
+    fromFallback(fallbackBranch)
+  )
 }
 
 export function isFallbackCommit(commit) {
