@@ -9,8 +9,11 @@ name: Publish @clawpump/claw-agent to npm
 #     `patch`), publishes, and commits the bump back to main. Just click run.
 #   • GitHub Release: uses the release tag (e.g. v0.2.0) as the version.
 #
-# Setup (once): add repo secret NPM_TOKEN = an npm "Automation" access token
-# (publish scope on @clawpump). Automation tokens skip the 2FA OTP prompt.
+# Setup (once, preferred): configure @clawpump/claw-agent's npm trusted
+# publisher for GitHub Actions with organization `Clawpump`, repository
+# `claw-agent`, and workflow `publish-claw-agent.yml`. The id-token permission
+# below lets npm authenticate the run with short-lived OIDC credentials.
+# A repo secret named NPM_TOKEN remains supported as a fallback.
 
 on:
   release:
@@ -28,13 +31,17 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write          # to commit the version bump back to main
+      id-token: write          # npm trusted publishing (OIDC)
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "26"
           registry-url: "https://registry.npmjs.org"
+
+      - name: Install npm with trusted publishing support
+        run: npm install --global npm@12.0.2
 
       - name: Set version (auto-bump or release tag)
         id: ver
