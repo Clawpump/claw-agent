@@ -123,6 +123,17 @@ conservative at the waist.
   without E2E proof, and plugins that touch core files.** Plugins live in their
   own directory and work within the ABCs/hooks we provide; if a plugin needs
   more, widen the generic plugin surface, don't special-case it in core.
+- **Third-party products / other people's projects integrated into the core
+  tree.** Observability backends, vendor SaaS integrations, analytics dashboards,
+  and similar "someone else's product" plugins do NOT land under `plugins/` in
+  this repo. They place an ongoing maintenance burden on us to keep them working
+  against a fast-moving core, for a backend we don't own. Ship them as a
+  **standalone plugin repo** users install into `~/.hermes/plugins/` (or via a
+  pip entry point), and promote them in the Nous Research Discord
+  (`#plugins-skills-and-skins`). This is a coupling-and-maintenance decision, not
+  a quality bar — the plugin can be excellent and still be a close. PRs that add
+  such a directory to the tree are closed with a pointer to publish it as its own
+  repo.
 
 ### Before you call it a bug — verify the premise (and when NOT to close)
 
@@ -198,6 +209,45 @@ When 3+ open PRs try to integrate the same *category* of thing (memory
 backends, providers, notifiers), don't merge them one at a time — design an
 ABC + orchestrator, wrap the existing built-in as the first provider, and turn
 the competing PRs into plugins against that interface.
+
+### Surface capability is a property of the SESSION, never of the process env
+
+A tool that only works because of *who is on the other end of the connection* —
+the desktop app's panes, the in-app browser, message reactions, Projects — must
+resolve its availability from the **session's own source**, not from an env var
+on the backend process.
+
+The client and the backend are separate machines on separate clocks. The
+desktop app can be driving a backend Electron spawned locally, one over SSH,
+one behind a plain URL + token, or Hermes Cloud. Only the first two are spawned
+by us and carry `HERMES_DESKTOP=1`. Every env-keyed GUI gate is therefore a
+silent no-op on the other half of the topologies, and the failure is invisible:
+the tool is stripped from the schema before the model ever sees it, on the same
+backend whose platform hint is telling the model it's *"chatting inside the
+Hermes desktop app."*
+
+The pattern that works:
+
+- **The toolset is the surface gate.** Keep the tools off `_HERMES_CORE_TOOLS`
+  (nobody else should pay their schema) and put them in a named toolset —
+  `desktop_ui`, `project`. The GUI gateway's `_load_enabled_toolsets(platform)`
+  folds that toolset in when the session's platform says GUI. One resolver,
+  every topology.
+- **`check_fn` answers reachability or user opt-in, not surface.** "Is the
+  renderer bridge wired?", "did the user enable reactions?" — fine. "Was I
+  spawned by Electron?" — not fine. `check_fn` results are also TTL-cached
+  process-wide (`tools/registry.py`), so a per-session answer does not belong
+  there at all: one process serves many sessions.
+- **Ask which identity you actually mean.** `HERMES_DESKTOP=1` legitimately
+  marks *"this backend process was spawned by the app"* — it gates the cron
+  ticker and web-dist handling correctly. It does NOT mean "a GUI is watching",
+  and the embedded terminal pane (`hermes --tui` against that same backend) is
+  the standing counterexample.
+
+Same test both ways: if the capability would still make sense with the client
+on another machine, it is session-scoped. Cover it with a test that asserts the
+GUI session gets the tool **with the env var absent** — that's the assertion
+the original gate could never have passed.
 
 ## Development Environment
 
@@ -314,7 +364,7 @@ class AIAgent:
         provider: str = None,
         api_mode: str = None,              # "chat_completions" | "codex_responses" | ...
         model: str = "",                   # empty → resolved from config/provider later
-        max_iterations: int = 90,          # tool-calling iterations (shared with subagents)
+        max_iterations: int = 500,         # tool-calling iterations (shared with subagents)
         enabled_toolsets: list = None,
         disabled_toolsets: list = None,
         quiet_mode: bool = False,
@@ -480,18 +530,18 @@ The dashboard embeds the real `hermes --tui` — **not** a rewrite.  See `hermes
 
 ### Electron Desktop Chat App (`apps/desktop/`)
 
-A **separate** chat surface from both the classic CLI and the dashboard's embedded TUI. It is an Electron + React + nanostore renderer (`@assistant-ui/react`) that talks to a `tui_gateway` backend over JSON-RPC (`requestGateway(method, params)`). It does NOT embed `hermes --tui` — it has its own composer, transcript, and slash-command pipeline. Route desktop bugs to the `hermes-desktop-app-work` skill, not `hermes-dashboard-work`.
+A **separate** chat surface from both the classic CLI and the dashboard's embedded TUI. It is an Electron + React + nanostore renderer (`@assistant-ui/react`) that talks to a `tui_gateway` backend over JSON-RPC (`requestGateway(method, params)`). The WebSocket/JSON-RPC transport lives in the framework-agnostic `apps/shared` package (`@hermes/shared` — `JsonRpcGatewayClient` + WS URL helpers), which the web dashboard (`web/`) also consumes; **desktop has no build/runtime dependency on the dashboard frontend** — it spawns a headless `hermes serve` backend server (the same gateway `dashboard` serves, minus the browser UI entirely: `serve` sets `headless_backend=True`, so `cmd_dashboard` skips `_build_web_ui` AND exports `HERMES_SERVE_HEADLESS=1` so `mount_spa()` disables the SPA even if a stray `web_dist/` exists — only the JSON-RPC/WS/API surface is reachable). `dashboard` and `serve` share `cmd_dashboard`/`start_server` but are independent surfaces — neither launches the other. The one exception is a backward-compat *fallback*: `serve` is newer, so the desktop spawn (`electron/backend-command.ts` + `backendSupportsServe()` in `electron/main.ts`) detects whether the resolved runtime registers `serve` and, only when it does not (an older managed install / PATH `hermes` the app hasn't updated yet), rewrites the argv to the legacy `dashboard --no-open`. Without that, a new app against an un-upgraded runtime would crash on an unknown subcommand and brick every mid-upgrade user. It does NOT embed `hermes --tui` — it has its own composer, transcript, and slash-command pipeline. For scoped Desktop architecture, state, resolver, transport, and testing rules, read `apps/desktop/AGENTS.md`.
 
 **Slash commands in the desktop app are curated client-side, then dispatched to the backend.** The pipeline:
 
 - **Backend already provides everything.** `tui_gateway/server.py` `commands.catalog` (empty-query list) and `complete.slash` (typed-query completions) both include built-in commands, user `quick_commands`, AND skill-derived commands (`scan_skill_commands()` / `get_skill_commands()`). The desktop app does not need a new RPC to see skills.
-- **The renderer curates via `apps/desktop/src/lib/desktop-slash-commands.ts`.** This is the load-bearing file. It holds `DESKTOP_COMMANDS` (the ~19 built-ins shown in the palette) plus block-lists for terminal-only / messaging-only / picker-owned / settings-owned / advanced commands that should NOT clutter the desktop popover.
+- **The renderer curates via `apps/desktop/src/lib/desktop-slash-commands.ts`.** This is the load-bearing file. It holds `DESKTOP_COMMAND_SPECS` (the built-ins and their Desktop surfaces) plus `NO_DESKTOP_SURFACE` block-lists for terminal-only / messaging-only / picker-owned / settings-owned / advanced commands that should NOT clutter the desktop popover.
   - `isDesktopSlashCommand(name)` — gates **execution**. Returns true for built-ins AND for any non-built-in (skill / quick command), so typed extension commands run.
   - `isDesktopSlashSuggestion(name)` — gates **discovery/completion**. Used by BOTH completion paths in `app/chat/composer/hooks/use-slash-completions.ts` (empty-query catalog filter + typed-query `complete.slash` filter) and by `filterDesktopCommandsCatalog`.
   - `isDesktopSlashExtensionCommand(name)` — true when the command is NOT a known Hermes built-in (i.e. a skill or user quick command). Both suggestion and catalog-filter paths allow extensions through so skill commands surface in the palette. (Added when fixing "skill commands missing from the desktop slash palette" — the curated allow-list was silently dropping every skill/quick command from completions even though they executed fine when typed.)
-- **Dispatch** lives in `app/session/hooks/use-prompt-actions.ts` (`runSlash`): built-ins that the desktop owns (`/skin`, `/help`, `/new`, …) are handled locally or via `commands.catalog`; everything else goes to `slash.exec`, falling back to `command.dispatch` (which the gateway resolves into skill / alias / exec directives). A skill command resolves to `{type: "skill", message}` and is submitted as a normal prompt.
+- **Dispatch** lives in `app/session/hooks/use-prompt-actions/slash.ts` (`runSlash`): built-ins that the desktop owns (`/skin`, `/help`, `/new`, …) are handled locally or via `commands.catalog`; everything else goes to `slash.exec`, falling back to `command.dispatch` (which the gateway resolves into skill / alias / exec directives). A skill command resolves to `{type: "skill", message}` and is submitted as a normal prompt.
 
-**Rule:** the desktop slash palette's curation is about hiding noise (terminal-only / messaging-only built-ins), NOT about hiding user-activated extensions. Skill commands and `quick_commands` are extensions the backend surfaces — they belong in completions. If you tighten `desktop-slash-commands.ts`, keep `isDesktopSlashExtensionCommand` flowing into both the suggestion and catalog-filter paths. Tests: `apps/desktop/src/lib/desktop-slash-commands.test.ts` (run via the repo-root `vitest`, since `apps/desktop` resolves deps from the root workspace install).
+**Rule:** the desktop slash palette's curation is about hiding noise (terminal-only / messaging-only built-ins), NOT about hiding user-activated extensions. Skill commands and `quick_commands` are extensions the backend surfaces — they belong in completions. If you tighten `desktop-slash-commands.ts`, keep `isDesktopSlashExtensionCommand` flowing into both the suggestion and catalog-filter paths. Tests: from `apps/desktop`, run `npx vitest run src/lib/desktop-slash-commands.test.ts` (workspace dependencies are installed at the repo root).
 
 ---
 
@@ -747,11 +797,44 @@ as a side effect of importing `model_tools.py`. Code paths that read plugin
 state without importing `model_tools.py` first must call `discover_plugins()`
 explicitly (it's idempotent).
 
+#### Native plugin compatibility policy
+
+The canonical contract and deprecation policy live in
+`website/docs/developer-guide/plugins/index.md#native-plugin-compatibility-contract`.
+Compatibility is enforced as a behavior contract, not through a monolithic
+`PLUGIN_API_VERSION`, a manifest-wide native `api:` match, or version literals
+on unrelated payloads. Keep documented plugin surfaces additive:
+
+- add hook payload data as keyword fields; signature-inspect callbacks so old
+  narrow signatures receive only fields they declare, while `**kwargs`
+  callbacks receive the complete payload;
+- do not remove or rename `PluginContext` methods; make new parameters optional
+  with defaults and keyword-only where possible;
+- ignore unknown native manifest fields;
+- give new provider methods default implementations, and signature-inspect
+  optional callback kwargs rather than forwarding them unconditionally;
+- use a local schema version only for a capability with a wire or persisted
+  contract, and preserve old state/config/session replay or ship a migration.
+
+Deprecations require a once-per-process warning, a documented replacement and
+migration note, and at least two subsequent minor releases before removal.
+Compatibility tests must load frozen plugins through the real discovery path
+and assert outcomes. Do not replace these with exact registry/catalog counts,
+source-reading tests, or assertions that a global version literal changed.
+
 ### Memory-provider plugins (`plugins/memory/<name>/`)
 
 Separate discovery system for pluggable memory backends. Current built-in
 providers include **honcho, mem0, supermemory, byterover, hindsight,
 holographic, openviking, retaindb**.
+
+Discovery covers the same four sources as the general `PluginManager` —
+bundled, `$HERMES_HOME/plugins/`, `./.hermes/plugins/` (opt-in via
+`HERMES_ENABLE_PROJECT_PLUGINS`), and `hermes_agent.memory_providers` entry
+points — but with **bundled-first** precedence, the reverse of the general
+system's later-wins order: a memory provider is activated by name, so a
+dropped-in directory must not be able to shadow a shipped one. Discovery
+enumerates without importing; nothing runs until `memory.provider` names it.
 
 Each provider implements the `MemoryProvider` ABC (see `agent/memory_provider.py`)
 and is orchestrated by `agent/memory_manager.py`. Lifecycle hooks include
@@ -782,6 +865,24 @@ landing in this tree. PRs that add a new directory under
 `plugins/memory/` will be closed with a pointer to publish the
 provider as its own repo. Existing in-tree providers stay; bug fixes
 to them are welcome.
+
+**No new third-party-product plugins in-tree (policy, June 2026):** the
+same rule applies beyond memory providers. Plugins that integrate
+someone else's product or project — observability/metrics backends,
+vendor SaaS connectors, analytics dashboards, paid-service tie-ins —
+must ship as **standalone plugin repos** that users install into
+`~/.hermes/plugins/` (or via pip entry points). They register through
+the existing plugin discovery path and use the ABCs/hooks/ctx surface
+we expose; nothing special is needed in core. The reason is
+maintenance load: every product we absorb into the tree becomes our
+burden to keep working against a fast-moving core, for a backend we
+don't own. Promote standalone plugins in the Nous Research Discord
+(`#plugins-skills-and-skins`). PRs that add such a directory under
+`plugins/` are closed with a pointer to publish it as its own repo —
+this is a coupling decision, not a quality judgment. (The
+`observability/`, `kanban/`, `disk-cleanup/`, etc. directories already
+in the tree are existing precedent, not an invitation to add more
+third-party-product plugins alongside them.)
 
 ### Model-provider plugins (`plugins/model-providers/<name>/`)
 
@@ -818,6 +919,72 @@ plug into `agent/context_engine.py`; image-gen providers into
 `plugin-llm-async-example`) live in the
 [`hermes-example-plugins`](https://github.com/NousResearch/hermes-example-plugins)
 companion repo, not in this tree.
+
+### Bot Mode (`apps/desktop/src/plugins/hermes-bots/`)
+
+The desktop "Bots" experience ships bundled in-tree. Each bot is a Hermes
+agent **profile** with a persistent identity. Its design rests on one settled
+invariant that has been regressed repeatedly, cost users real conversation
+history each time, and is not open for re-litigation in a routine PR:
+
+**One bot = ONE canonical forever-chat, identified by NAME.** The chat's one
+and only identity is **(profile, session titled exactly "Bot Chat")** — the
+state DB's UNIQUE(title) index makes that pair an exact registry of at most
+one row. The full lifecycle when a bot row is clicked:
+
+1. **Resolve the registry, every time.** Look up the profile's `Bot Chat`
+   session by exact title via `session.list {title, include_hidden: true}`
+   (indexed, window-free; hidden rows resolve because canonical chats are
+   always hidden; compression lineages resolve to the live tip). Row exists →
+   open it. That is the entire happy path.
+2. **No row → create it,** titled `Bot Chat`, born hidden, kicked off with
+   the bot's intro. Creation adopts-before-minting: it re-runs the registry
+   lookup first, so a concurrent or pre-existing row is opened, never forked.
+   (`set_session_title` silently drops conflicting titles — returns 0 rows —
+   which is how the 2026-08 infinite fork loop started; adopt-before-mint is
+   what kills it.)
+
+**There is NO session-id pin.** The previous design stored a pointer in
+`ui_meta['hermes-bots'].chat` and verified it per click; five hardening
+waves (#88690, #90732, #90751, the #91791 revert, #92042) each guarded a new
+way that pointer dangled or got stolen — rows[0] steals, `last_session`
+adoptions, transient clears, drifted-title welds (a pin re-anchored onto a
+cron session passed every guard). Name-as-identity removes the failure class:
+a name cannot dangle, and a corrupted historical pointer simply never gets
+read. Legacy `chat` keys in ui_meta are ignored and dropped from merges.
+
+Why recency must never win (the #91791 → #92042 lesson): canonical Bot
+Chats are **unconditionally hidden** from the Sessions sidebar, so the bot
+row is the ONLY door to the forever-chat. A "newest visible session wins"
+preference doesn't re-order two equivalent entry points — it walls the
+entire relationship off behind a row that previews one session and opens
+another, and any stray draft that catches a prompt captures the row.
+Side-chats started via "New chat with this agent" are not plumbing-titled,
+stay visible in the Sessions sidebar, and are reachable there; they are
+never the bot row's target.
+
+Corollaries for reviewers:
+
+- There is no per-bot session browser, by explicit design (removed in
+  #90732). Do not add one back.
+- Reject any PR that reintroduces a stored session-id pointer as canonical
+  identity — including "as a fallback tier" or "for verification". The
+  registry lookup is the whole contract; pointers are how every prior
+  incident started.
+- Reject any PR that consults recency, visibility, or "where the user left
+  off" for the bot row's target — reports that motivate such a change are
+  almost always about side-chats, and the fix belongs in the Sessions
+  sidebar (hide-sweep false positives), not in the bot row's target.
+- The gateway reports the registry row per profile as `canonical_session`
+  on `profiles.list` (resolved server-side by title); roster preview,
+  activity signals, and the `/new`→`/compact` guard all read it, so preview
+  identity and click identity are the same row by construction.
+
+Regression tests encoding this contract:
+`tests/canonical-chat-registry.test.mjs` (includes a tripwire asserting the
+open path never reads or writes a stored pointer),
+`tests/canonical-chat-creation.test.mjs`, `tests/hide-bot-chats.test.mjs`,
+and `tests/tui_gateway/test_profiles_list_canonical_session.py`.
 
 ---
 
@@ -954,9 +1121,10 @@ Enable/disable per platform via `hermes tools` (the curses UI) or the
 ## Delegation (`delegate_task`)
 
 `tools/delegate_tool.py` spawns a subagent with an isolated
-context + terminal session. Synchronous: the parent waits for the
-child's summary before continuing its own loop — if the parent is
-interrupted, the child is cancelled.
+context + terminal session. By default the parent waits for the
+child's summary before continuing its own loop. With `background=true`,
+Hermes returns a delegation id immediately and the result re-enters the
+conversation later through the async-delegation completion queue.
 
 Two shapes:
 
@@ -968,7 +1136,8 @@ Two shapes:
 Roles:
 
 - `role="leaf"` (default) — focused worker. Cannot call `delegate_task`,
-  `clarify`, `memory`, `send_message`, `execute_code`.
+  `clarify`, `memory`, `send_message`, `cronjob`. Retains `execute_code`
+  (programmatic tool calling).
 - `role="orchestrator"` — retains `delegate_task` so it can spawn its
   own workers. Gated by `delegation.orchestrator_enabled` (default true)
   and bounded by `delegation.max_spawn_depth` (default 2).
@@ -978,9 +1147,9 @@ Key config knobs (under `delegation:` in `config.yaml`):
 `orchestrator_enabled`, `subagent_auto_approve`, `inherit_mcp_toolsets`,
 `max_iterations`.
 
-Synchronicity rule: delegate_task is **not** durable. For long-running
-work that must outlive the current turn, use `cronjob` or
-`terminal(background=True, notify_on_complete=True)` instead.
+Durability rule: background `delegate_task` is detached from the current
+turn but still process-local. For work that must survive process restart, use
+`cronjob` or `terminal(background=True, notify_on_complete=True)` instead.
 
 ---
 
@@ -1064,12 +1233,15 @@ kanban task.
 
 - **CLI:** `hermes_cli/kanban.py` wires `hermes kanban` with verbs
   `init`, `create`, `list` (alias `ls`), `show`, `assign`, `link`,
-  `unlink`, `comment`, `complete`, `block`, `unblock`, `archive`,
+  `unlink`, `comment`, `attach`, `attachments`, `attach-rm`, `complete`,
+  `request-review`, `request-changes`, `reopen-review`, `block`, `unblock`, `archive`,
   `tail`, plus less-commonly-used `watch`, `stats`, `runs`, `log`,
   `assignees`, `heartbeat`, `notify-*`, `dispatch`, `daemon`, `gc`.
 - **Worker/orchestrator toolset:** `tools/kanban_tools.py` exposes
-  `kanban_show`, `kanban_complete`, `kanban_block`, `kanban_heartbeat`,
-  `kanban_comment`, `kanban_create`, `kanban_link`; profiles that
+  `kanban_show`, `kanban_complete`, `kanban_request_review`,
+  `kanban_request_changes`, `kanban_block`,
+  `kanban_heartbeat`, `kanban_comment`, `kanban_create`, `kanban_link`,
+  `kanban_attach`, `kanban_attach_url`, `kanban_attachments`; profiles that
   explicitly enable the `kanban` toolset outside a dispatcher-spawned
   task also get `kanban_list` and `kanban_unblock` for board routing.
 - **Dispatcher:** long-lived loop that (default every 60s) reclaims
@@ -1092,6 +1264,79 @@ Isolation model:
   loops.
 
 Full user-facing docs: `website/docs/user-guide/features/kanban.md`.
+
+---
+
+## Update Pipeline (`hermes update`)
+
+The updater is transactional in shape (fleet-update campaign, #91277 —
+Aug 2026). Every stage exists because its absence was a real field
+failure; PRs that weaken a stage need to answer for the failure class it
+guards:
+
+```
+plan → snapshot → apply → restart-per-kind → verify → report
+```
+
+- **Plan** (`hermes_cli/update_inventory.py`, `hermes update --plan`):
+  read-only inventory — install kind, all profiles, every live gateway
+  with supervisor + running code version. Deployment kinds are
+  first-class: `git` updates in place; `docker`/`nix`/`apt` are NOT
+  in-place-updatable and the updater reports the correct external
+  command instead of fighting the deployment model.
+- **Snapshot** (`hermes_cli/backup.py`): pre-update quick snapshot for
+  EVERY profile (the code swap + fleet restart touch all of them), each
+  into its own `state-snapshots/`, identical file set + 1 GiB per-file
+  cap + keep=1. **Never add a partial/tiered snapshot set** — mixed
+  coverage creates torn-restore states across schema generations. Quick
+  snapshots are FILE-LOSS RECOVERY (the per-profile cron-jobs safety
+  net restores from them), NOT code-rollback insurance; `--backup` full
+  mode owns rollback.
+- **Apply**: git pull, or the Windows ZIP fallback — which fires ONLY
+  when git itself failed (`_should_zip_fallback_on_update_error`,
+  argv-classified; a dependency-install failure must never trigger a
+  tree-clobbering re-download), REFUSES a dirty working tree
+  (`-uall`, plus a pre-swap TOCTOU re-check), and grafts the live
+  `apps/desktop/release/` into the staged swap (the GitHub source ZIP
+  has no built desktop app; without the graft the swap deletes it).
+- **Restart-per-kind**: systemd and launchd restarts are FLEET-WIDE
+  (every `hermes-gateway*` unit / `ai.hermes.gateway*` LaunchAgent),
+  drain-first (SIGUSR1) with per-unit/per-label failure isolation.
+  Restarting only the invoking profile's service leaves siblings on
+  stale `sys.modules` until they crash — the largest dupe-PR cluster in
+  the repo's history came from that bug.
+- **Verify**: gateways stamp their running `code_sha`/`code_version`
+  into `gateway_state.json` on every runtime-status write
+  (`gateway/status.py`); after the restart phase the updater compares
+  each live gateway against the fresh checkout and prints a fleet
+  version matrix. A provably-stale gateway fails the update (exit 1) —
+  automation must never treat a mixed-version fleet as healthy.
+- **Report**: every run writes a machine-readable receipt to
+  `~/.hermes/logs/update_receipts/` (`latest.json` pointer; steps,
+  skips WITH reasons, restart outcome, plan, fleet snapshot).
+  Finalization is owned by the `cmd_update` command boundary — early
+  `sys.exit` paths (preflight refusals, fetch failures) still persist
+  a receipt with the real exit code. A begun-but-unwritten receipt is
+  a bug: the refused/failed runs are the ones receipts exist for.
+
+Architecture direction: process-scan-based coordination between the
+updater, serve/dashboard, and the gateway is being replaced by a
+gateway-owned control socket (#92091). Do not add new scan heuristics
+without checking that design; scans are the fallback layer.
+
+### Gateway lifecycle vs. the Desktop app
+
+`hermes serve` (control plane, desktop-spawned child) dies with the app
+— by design. The messaging gateway (`gateway run`) SURVIVES the app: the
+serve backend's `/api/gateway/*` endpoints spawn it detached
+(`_spawn_hermes_action` — `start_new_session` / `DETACHED_PROCESS`), so
+`before-quit`'s backend SIGTERM never reaches it. Bots keep running
+when the user closes the app. The known breach of this contract is the
+Windows shim-unlock teardown (`taskkill /T /F` on venv-shim holders,
+#85265) — it exists to let updates proceed, and its replacement is
+#92091's `pause-for-update`. Do not "fix" gateway-dies-with-app reports
+by re-parenting the gateway under the backend, and do not "fix" update
+locks by widening the tree-kill.
 
 ---
 
@@ -1118,9 +1363,10 @@ detects process completion and triggers a new agent turn. Control verbosity of b
 messages with `display.background_process_notifications`
 in config.yaml (or `HERMES_BACKGROUND_NOTIFICATIONS` env var):
 
-- `all` — running-output updates + final message (default)
-- `result` — only the final completion message
-- `error` — only the final message when exit code != 0
+- `concise` — one-line status message on completion; failures append a short output tail (default)
+- `all` — running-output updates + final raw-output message
+- `result` — only the final raw-output completion message
+- `error` — only the final raw-output message when exit code != 0
 - `off` — no watcher messages at all
 
 ---
@@ -1174,26 +1420,67 @@ automatically scope to the active profile.
    a unique credential (bot token, API key), call `acquire_scoped_lock()` from
    `gateway.status` in the `connect()`/`start()` method and `release_scoped_lock()` in
    `disconnect()`/`stop()`. This prevents two profiles from using the same credential.
-   See `gateway/platforms/telegram.py` for the canonical pattern.
+   See `plugins/platforms/irc/adapter.py` for the canonical pattern.
 
 6. **Profile operations are HOME-anchored, not HERMES_HOME-anchored** — `_get_profiles_root()`
    returns `Path.home() / ".hermes" / "profiles"`, NOT `get_hermes_home() / "profiles"`.
    This is intentional — it lets `hermes -p coder profile list` see all profiles regardless
    of which one is active.
 
+7. **Multiplex profile-scoped env reads MUST fail closed — never borrow from `os.environ`**
+   (`agent/secret_scope.py` contract; #72348, #86905). Under `gateway.multiplex_profiles`,
+   `os.environ` holds the **default profile's** values; a secondary profile's `.env` lives
+   only in its secret scope (installed per-turn by `_profile_runtime_scope`). Any
+   profile-level env config — credentials (`app_secret`, tokens) AND authorization
+   (`FEISHU_ALLOWED_USERS`, `{PLATFORM}_ALLOW_ALL_USERS`, `GATEWAY_ALLOW_ALL_USERS`,
+   `group_policy`, `allow_bots`, ...) — must be read scope-aware:
+   - Adapters: `_get_scoped_secret()` (canonical fail-closed copy in
+     `plugins/platforms/feishu/adapter.py`, #86905).
+   - Gateway authz: `_auth_env()` / `_platform_gate_env()` (`gateway/authz_mixin.py`).
+   Rules:
+   - Scope installed + multiplex active → a scoped miss returns the **default**.
+     NEVER fall through to `os.environ` — that leaks another profile's value and
+     silently breaks routing/admission (a leaked default allowlist skips the
+     allow-all check and rejects every secondary-profile sender, #86905).
+   - Unscoped default-profile path (`UnscopedSecretError`) and single-profile
+     deployments keep the `os.environ` read — there it IS the profile's own value.
+   - Authorization config is the sharpest edge: allowlist/allow-all leaks cause
+     silent rejections (or worse, fail-open) that only show up as missing replies.
+   - The `_get_scoped_secret` wrapper is copy-pasted across ~15 platform adapters —
+     when touching any of them, make sure the fail-closed semantics are present;
+     do not reintroduce the `except _UnscopedSecretError: val = os.getenv(...)`
+     fallback-after-miss shape.
+
 ## Known Pitfalls
+
+### DO NOT infer process identity from argv substrings
+The bug class behind ~10 fleet-update issues (#90778, #87594, #78089,
+#76129, #91964, ...): classifying a process by `"serve" in cmdline` or
+similar. `kanban --preserve-cache` contains "serve"; a flag VALUE can
+equal a subcommand (`-m dashboard serve`); truncated cmdlines hide the
+real subcommand. Rules:
+- Use the canonical matchers: `gateway.status.looks_like_gateway_command_line`
+  (gateway run), `hermes_cli.update_cmd._hermes_holder_subcommand`
+  (top-level subcommand of any Hermes argv). Never hand-roll token scans.
+- Flag sets must be DERIVED from the parser
+  (`_holder_value_flags()` introspects `build_top_level_parser()`), never
+  hand-written lists — they drift.
+- Never blanket-exclude ancestors from process scans: when `/update` runs
+  as the gateway's child, a gateway ancestor must stay visible to the
+  pause machinery (#87594). Exclude interactive ancestry, carve out
+  gateway-shaped ancestors.
+- Match on FULL cmdlines; truncate only at display time (#78089).
+- Before adding any new scan heuristic, read #92091 — the gateway control
+  socket replaces scans as the primary coordination mechanism; scans are
+  the fallback layer for old/crashed processes.
 
 ### DO NOT hardcode `~/.hermes` paths
 Use `get_hermes_home()` from `hermes_constants` for code paths. Use `display_hermes_home()`
 for user-facing print/log messages. Hardcoding `~/.hermes` breaks profiles — each profile
 has its own `HERMES_HOME` directory. This was the source of 5 bugs fixed in PR #3575.
 
-### DO NOT introduce new `simple_term_menu` usage
-Existing call sites in `hermes_cli/main.py` remain for legacy fallback only;
-the preferred UI is curses (stdlib) because `simple_term_menu` has
-ghost-duplication rendering bugs in tmux/iTerm2 with arrow keys. New
-interactive menus must use `hermes_cli/curses_ui.py` — see
-`hermes_cli/tools_config.py` for the canonical pattern.
+### All CLI menu-pickers MUST use curses.
+Interactive menus must use `hermes_cli/curses_ui.py`. See `hermes_cli/tools_config.py` for an example.
 
 ### DO NOT use `\033[K` (ANSI erase-to-EOL) in spinner/display code
 Leaks as literal `?[K` text under `prompt_toolkit`'s `patch_stdout`. Use space-padding: `f"\r{line}{' ' * pad}"`.
@@ -1214,6 +1501,47 @@ When an agent is running, messages pass through two sequential guards:
 while the agent is blocked (e.g. approval prompts) MUST bypass BOTH
 guards and be dispatched inline, not via `_process_message_background()`
 (which races session lifecycle).
+
+### Streaming delivery contract (stream-is-the-message adapters) — duplicate-final class
+Adapters with `draft_stream_is_message = True` (relay Slack native streaming)
+keep ONE cumulative native stream per turn; the stream IS the final message.
+Four invariants, each learned from a live duplicate-final incident (NS-658
+canary ledger, hermes#85796 / gateway-gateway#210). Violating any of them
+re-creates a duplicate or a frozen stream:
+
+1. **Draft frames must be prefix-stable.** The connector computes append-only
+   deltas: frame N must be a string prefix of frame N+1. NEVER mutate draft
+   frames per-tick — no fence-closing (`ensure_closed_code_fences`), no cursor
+   suffix, no segment-state resets at tool boundaries, no mrkdwn conversion.
+   Any non-prefix frame triggers a whole-snapshot re-append on the platform
+   ("stacked copies"). The finalize path may still transform the real final.
+2. **The consumer declares the final; the adapter never guesses.**
+   `finish(final_text)` carries the completed `final_response` (verifier
+   footer, completion explainer included) as the authoritative finalize
+   payload. New post-stream response augmentation MUST ride this payload —
+   if it mutates `final_response` after the stream sealed, it re-opens the
+   #11 bug (`delivered_final_matches` mismatch → corrective duplicate send).
+3. **Interim sends must carry `_interim_send` metadata.** Any consumer-side
+   `adapter.send()` that is NOT the turn-final (commentary, segment-tail
+   flushes) must set `metadata["_interim_send"] = True`, or the relay
+   adapter's seal-interception will seal the live stream with interim text.
+   Seal-interception exists at BOTH egress doors (`send()` AND
+   `send_for_platform()`); a new egress door needs the same two checks.
+4. **Reconcile by edit, never by plain send.** Any lane that delivers a final
+   beside an already-sealed stream (queued follow-ups, media-accompanied
+   finals, future lanes) must first try `edit_message` on the consumer's
+   `message_id`; plain `send()` is the fallback only when no editable message
+   exists. A sealed native stream is a regular message — `chat.update` on it
+   works (live-verified).
+
+Contract tests: `tests/gateway/test_stream_final_contract.py` (all four
+invariants, mutation-checked). Slack streaming API ground truth (live-probed,
+also encoded in connector comments/tests): `chat.*Stream` speaks STANDARD
+markdown, not mrkdwn; `stopStream.markdown_text` APPENDS (never replaces);
+`startStream`/`stopStream` are rate-limit Tier 2 (~20/min).
+
+Guard style note: check `draft_stream_is_message` with `is True` — MagicMock
+adapters in older tests auto-create truthy attributes.
 
 ### Squash merges from stale branches silently revert recent fixes
 Before squash-merging a PR, ensure the branch is up to date with `main`
@@ -1248,76 +1576,108 @@ def profile_env(tmp_path, monkeypatch):
 
 ## Testing
 
+### Python
 **ALWAYS use `scripts/run_tests.sh`** — do not call `pytest` directly. The script enforces
 hermetic environment parity with CI (unset credential vars, TZ=UTC, LANG=C.UTF-8,
-`-n auto` xdist workers, in-tree subprocess-isolation plugin). Direct `pytest`
+per-file subprocess isolation via `scripts/run_tests_parallel.py` — no xdist,
+worker count auto-scaled from CPU count). Direct `pytest`
 on a 16+ core developer machine with API keys set diverges from CI in ways
 that have caused multiple "works locally, fails in CI" incidents (and the reverse).
 
 ```bash
 scripts/run_tests.sh                                  # full suite, CI-parity
 scripts/run_tests.sh tests/gateway/                   # one directory
-scripts/run_tests.sh tests/agent/test_foo.py::test_x  # one test
+scripts/run_tests.sh tests/agent/test_foo.py -k test_x  # one test (file + -k; the runner is file-granular)
 scripts/run_tests.sh -v --tb=long                     # pass-through pytest flags
-scripts/run_tests.sh --no-isolate tests/foo/          # disable subprocess isolation (faster, for debugging)
 ```
 
-### Subprocess-per-test isolation
+**Flake policy:** the runner auto-retries a failing test FILE once in a fresh
+subprocess (`--file-retries`, default 1; `HERMES_TEST_FILE_RETRIES=0` to
+disable). Pass-on-retry counts as green but is printed in a `⚠ FLAKY` summary
+section with both attempts' output. A FLAKY report is a bug to fix, not noise
+to ignore — timing-sensitive tests must not assume a quiet runner (loose
+wall-clock bounds ≥ 2s, event-based sync, no `assert not _wait_until(...)`
+negative-timing races).
 
-Every test runs in a freshly-spawned Python subprocess via the in-tree plugin
-at `tests/_isolate_plugin.py`. This means module-level dicts/sets and
-ContextVars from one test cannot leak into the next — the historic
-`_reset_module_state` autouse fixture is gone.
+#### Subprocess-per-test-file isolation
 
-Implementation notes:
+Every test file runs in a freshly-spawned Python subprocess via `run_tests_parallel.py`. This means module-level dicts/sets and
+ContextVars from one test file cannot leak into the next.
 
-- The plugin uses `multiprocessing.get_context("spawn")`, which works on
-  Linux, macOS, and Windows alike (POSIX `fork` is not used).
-- Per-test overhead is ~0.5–1.0s (Python startup + pytest collection). xdist
-  parallelism amortizes this across cores; on a 20-core box the full suite
-  finishes in roughly the same wall time as before, but flake-free.
-- `isolate_timeout` (configured in `pyproject.toml`) caps each test at 30s.
-  Hangs are killed and surfaced as a failure report.
-- Pass `--no-isolate` to disable isolation — useful when debugging a single
-  test interactively, or when you specifically want to verify state leakage.
-- The plugin disables itself in child processes (sentinel envvar
-  `HERMES_ISOLATE_CHILD=1`), so there's no fork-bomb risk.
+#### Why the wrapper
 
-### Why the wrapper (and why the old "just call pytest" doesn't work)
+|                     | Without wrapper                             | With wrapper                              |
+| ------------------- | ------------------------------------------- | ----------------------------------------- |
+| Provider API keys   | Whatever is in your env (auto-detects pool) | All env vars except a specific few unset. |
+| HOME / `~/.hermes/` | Your real config+auth.json                  | Temp dir per test                         |
+| Timezone            | Local TZ (PDT etc.)                         | UTC                                       |
+| Locale              | Whatever is set                             | C.UTF-8                                   |
 
-Five real sources of local-vs-CI drift the script closes:
+### Where to place what tests
 
-| | Without wrapper | With wrapper |
-|---|---|---|
-| Provider API keys | Whatever is in your env (auto-detects pool) | All `*_API_KEY`/`*_TOKEN`/etc. unset |
-| HOME / `~/.hermes/` | Your real config+auth.json | Temp dir per test |
-| Timezone | Local TZ (PDT etc.) | UTC |
-| Locale | Whatever is set | C.UTF-8 |
-| xdist workers | `-n auto` = all cores | `-n auto` (safe — subprocess isolation prevents cross-worker flakes) |
+The CI change classifier (`scripts/ci/classify_changes.py`) runs specific jobs based on what files changed. A Python test that asserts
+about the contents of `package.json`, `package-lock.json`, `.ts`/`.tsx`
+source, or any other JS-side artifact will not run on a PR that only touches
+those files. This means a regression can go green on a PR and red on `main` (where the
+classifier fails open and runs everything).
 
-`tests/conftest.py` also enforces points 1-4 as an autouse fixture so ANY pytest
-invocation (including IDE integrations) gets hermetic behavior — but the wrapper
-is belt-and-suspenders.
+Any test that reads or asserts about `package.json`,
+`package-lock.json`, `tsconfig.json`, `.ts`/`.tsx`/`.js`/`.mjs`/`.cjs`
+source files configuration belongs in the JS (vitest) test suite, not in `tests/*.py`.
 
-### Running without the wrapper (only if you must)
+### Don't fake the host OS
 
-If you can't use the wrapper (e.g. inside an IDE that shells pytest directly),
-at minimum activate the venv. The isolation plugin loads automatically from
-`addopts` in `pyproject.toml`, so you get the same per-test process isolation
-either way.
+Hermes supports Linux, macOS and native Windows, and plenty of its behaviour
+genuinely differs per host. Those differences are tested by running on the
+host, not by patching `sys.platform`.
 
-```bash
-source .venv/bin/activate   # or: source venv/bin/activate
-python -m pytest tests/ -q
+```python
+@pytest.mark.linux_only
+@pytest.mark.macos_only
+@pytest.mark.windows_only
 ```
 
-If you need to bypass isolation for fast feedback while debugging:
+Things that are host-independent can stay unmarked:
 
-```bash
-python -m pytest tests/agent/test_foo.py -q --no-isolate
-```
+- **Pure functions that take a platform as data** —
+  `hidden_windows_child_options(opts, is_windows=True)` is input→output, not a
+  fake host. (Contrast: setting a module-level `IS_WINDOWS` flag and then
+  calling `windows_detach_flags()` *is* a fake.)
+- **Declaration/packaging invariants** — "pyproject declares `tzdata` with a
+  `sys_platform == 'win32'` marker" asserts about a file, not about runtime.
 
-Always run the full suite before pushing changes.
+The line: **if the test needs the interpreter to believe it is on another OS
+in order to pass, it belongs on that OS.**
+When one test body walks several platforms in sequence, split it.
+Keep the host-native arm on the Linux lane and move the other arm into its own marked test.
+
+**Live Windows process-topology E2E: the `wine2e` lane.** For claims about
+real Windows process behavior that mocks cannot reproduce (venv-holder
+scans, process-tree parentage, launcher/worker chains, detach semantics),
+there is an on-demand workflow `windows-venv-e2e.yml` that runs
+`tests/hermes_cli/test_venv_holder_windows_live.py` on a real
+`windows-latest` runner — spawning actual processes and driving the real
+detection code, no mocked psutil. It fires ONLY on pushes to `wine2e/**`
+branches (inert on PRs and main; costs nothing on normal work). The proven
+workflow: write probes that pin CORRECT behavior, push to a `wine2e/`
+branch to reproduce the bugs live on unfixed code, build the fix, iterate
+until the lane is green, then open the PR — the live receipt on the exact
+head is the Windows proof reviewers ask for. Extend the live suite when
+touching that subsystem; assert against the gateway ANCESTOR found by
+argv, not the direct parent (the venv shim makes every spawn a
+launcher/worker chain).
+
+**Use the marker, never a bare `skipif`.** `scripts/ci/list_os_marked_tests.py`
+decides which files the macOS/Windows lanes import by grepping for the marker
+*name*, and the lane then filters with `-m <marker>`. A test gated with
+`@pytest.mark.skipif(sys.platform != "win32")` therefore skips on Linux AND is
+never imported on the Windows lane — it runs on no host at all, silently. The
+same trap catches a file-local alias (`windows_only = pytest.mark.skipif(...)`):
+the grep matches the name, so the file *is* listed, but `-m windows_only`
+deselects every test in it and the lane reports green over zero coverage.
+Equally, don't `pytest.skip()` the non-host rows of a `@parametrize` over
+platforms — split it into one marked test per OS, or only the host's row ever
+executes.
 
 ### Don't write change-detector tests
 
@@ -1367,3 +1727,58 @@ not the specific names.
 
 Reviewers should reject new change-detector tests; authors should convert
 them into invariants before re-requesting review.
+
+### Never read source code in tests
+
+A test that reads a source file's text is testing *the shape of the
+source code*, not its behavior. This is a hard antipattern, banned outright.
+Any test that reads a .py, .ts, .tsx, etc., file is suspect.
+
+**Why it's actively harmful, not just weak:**
+
+- It passes when the implementation is subtly broken (the regex matches a
+  call site that exists but is wired wrong) and fails when a correct
+  refactor changes formatting, variable names, or control flow with
+  identical runtime behavior. Both directions of failure are wrong.
+- It can't be run against a built/bundled/minified artifact, so it silently
+  stops testing anything the moment code moves, gets renamed, or a
+  dependency reformats it.
+- It actively blocks refactors: reviewers see "keeps a pattern intact" tests
+  fail during pure structural cleanup with no behavior change, and either
+  hand-wave the failure (dangerous) or waste time updating regexes that add
+  nothing (waste).
+- It gives false confidence. a green suite full of source-regex tests
+  looks like coverage but has never once executed the code path it claims
+  to guard.
+
+**Do not write:**
+
+```ts
+const source = fs.readFileSync(path.join(__dirname, 'main.ts'), 'utf8')
+
+test('backend spawn hides the Windows console', () => {
+  assert.match(source, /spawn\(\s*backend\.command,\s*backend\.args[\s\S]{0,300}hiddenWindowsChildOptions/)
+})
+```
+
+**Do write — extract the logic into a small pure/DI-testable function and
+call it for real:**
+
+```ts
+// backend-spawn.ts
+export function hiddenWindowsChildOptions(options: SpawnOptionsLike = {}, isWindows = process.platform === 'win32') {
+  if (!isWindows || 'windowsHide' in options) return options
+  return { ...options, windowsHide: true }
+}
+
+// backend-spawn.test.ts
+test('windowsHide defaults to true on Windows, is left alone elsewhere', () => {
+  assert.equal(hiddenWindowsChildOptions({}, true).windowsHide, true)
+  assert.equal(hiddenWindowsChildOptions({}, false).windowsHide, undefined)
+  assert.equal(hiddenWindowsChildOptions({ windowsHide: false }, true).windowsHide, false)
+})
+```
+
+If the logic lives inline in a god-file (`main.ts`, `cli.py`,
+`gateway/run.py`) and extracting it feels disruptive: that's the actual
+signal to do the extraction, not to regex around it.

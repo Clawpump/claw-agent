@@ -12,12 +12,83 @@ from pathlib import Path
 from typing import Awaitable, Callable
 
 from agent.model_metadata import estimate_tokens_rough
+from hermes_cli._subprocess_compat import IS_WINDOWS, windows_hide_flags
+from hermes_cli.sizefmt import format_bytes
+
+from abc import ABC, abstractmethod
+
+# ---------------------------------------------------------------------------
+# Plugin context-reference provider API (Issue #26193)
+# ---------------------------------------------------------------------------
+
+BUILTIN_PREFIXES = frozenset({"diff", "staged", "file", "folder", "git", "url"})
+
+_context_reference_providers: dict[str, "ContextReferenceProvider"] = {}
+
+
+class ContextCompletionItem:
+    """A single autocomplete result from a context reference provider."""
+
+    __slots__ = ("text", "display", "meta")
+
+    def __init__(self, text: str, display: str = "", meta: str = "") -> None:
+        self.text = text
+        self.display = display or text
+        self.meta = meta
+
+
+class ContextReferenceProvider(ABC):
+    """Base class for plugin-registered @-prefix context reference providers.
+
+    Plugins subclass this and register via
+    ``PluginContext.register_context_reference()``.
+    """
+
+    prefix: str = ""  # e.g. "issue", "channel", "doc"
+    description: str = ""  # shown in autocomplete meta column
+
+    @abstractmethod
+    async def autocomplete(self, query: str, *, limit: int = 10) -> list[ContextCompletionItem]:
+        """Return autocomplete items for the given query string."""
+        ...
+
+    @abstractmethod
+    async def expand(self, target: str) -> str | None:
+        """Expand *target* to prompt content.  Return ``None`` to skip."""
+        ...
+
+
+def register_context_reference_provider(provider: ContextReferenceProvider) -> None:
+    """Register a plugin context reference provider."""
+    if not isinstance(provider, ContextReferenceProvider):
+        raise TypeError("provider must be a ContextReferenceProvider instance")
+    prefix = provider.prefix.lower().strip()
+    if not prefix:
+        raise ValueError("prefix must be a non-empty string")
+    if prefix in BUILTIN_PREFIXES:
+        raise ValueError(f"prefix '{prefix}' is reserved for built-in references")
+    if prefix in _context_reference_providers:
+        raise ValueError(f"prefix '{prefix}' is already registered")
+    _context_reference_providers[prefix] = provider
+
+
+def get_context_reference_providers() -> dict[str, ContextReferenceProvider]:
+    """Return a snapshot of all registered plugin providers."""
+    return dict(_context_reference_providers)
+
 
 _QUOTED_REFERENCE_VALUE = r'(?:`[^`\n]+`|"[^"\n]+"|\'[^\'\n]+\')'
 REFERENCE_PATTERN = re.compile(
     rf"(?<![\w/])@(?:(?P<simple>diff|staged)\b|(?P<kind>file|folder|git|url):(?P<value>{_QUOTED_REFERENCE_VALUE}(?::\d+(?:-\d+)?)?|\S+))"
 )
+# Plugin fallback pattern – catches any @<word>:<value> not handled by the
+# built-in regex so that plugin-registered prefixes can be resolved.
+_PLUGIN_REFERENCE_PATTERN = re.compile(
+    rf"(?<![\w/])@(?P<kind>[a-zA-Z][a-zA-Z0-9_-]*):(?P<value>{_QUOTED_REFERENCE_VALUE}(?::\d+(?:-\d+)?)?|\S+)"
+)
+
 TRAILING_PUNCTUATION = ",.;!?"
+_NEEDS_QUOTING = re.compile(r"""[\s()\[\]{}<>"'`]""")
 _SENSITIVE_HOME_DIRS = (".ssh", ".aws", ".gnupg", ".kube", ".docker", ".azure", ".config/gh")
 _SENSITIVE_HERMES_DIRS = (Path("skills") / ".hub",)
 _SENSITIVE_HOME_FILES = (
@@ -59,6 +130,21 @@ class ContextReferenceResult:
     blocked: bool = False
 
 
+def format_reference_value(value: str) -> str:
+    """Quote a reference value so ``REFERENCE_PATTERN`` reads it back whole.
+
+    The unquoted alternative in the pattern is ``\\S+``, so a path containing a
+    space parses as a truncated ref with the tail left behind as loose text.
+    Mirrors ``formatRefValue`` in the desktop's directive-text.tsx.
+    """
+    if not _NEEDS_QUOTING.search(value):
+        return value
+    for quote in ("`", '"', "'"):
+        if quote not in value:
+            return f"{quote}{value}{quote}"
+    return value
+
+
 def parse_context_references(message: str) -> list[ContextReference]:
     refs: list[ContextReference] = []
     if not message:
@@ -98,6 +184,27 @@ def parse_context_references(message: str) -> list[ContextReference]:
                 line_end=line_end,
             )
         )
+
+    # Second pass: resolve plugin-registered prefixes the built-in pattern missed
+    if _context_reference_providers:
+        for match in _PLUGIN_REFERENCE_PATTERN.finditer(message):
+            kind = match.group("kind")
+            if kind in BUILTIN_PREFIXES:
+                continue
+            # Skip if already captured by the built-in pattern
+            if any(r.kind == kind and r.start == match.start() for r in refs):
+                continue
+            if kind in _context_reference_providers:
+                value = _strip_trailing_punctuation(match.group("value") or "")
+                refs.append(
+                    ContextReference(
+                        raw=match.group(0),
+                        kind=kind,
+                        target=_strip_reference_wrappers(value),
+                        start=match.start(),
+                        end=match.end(),
+                    )
+                )
 
     return refs
 
@@ -151,13 +258,24 @@ async def preprocess_context_references_async(
     blocks: list[str] = []
     injected_tokens = 0
 
-    for ref in refs:
-        warning, block = await _expand_reference(
-            ref,
-            cwd_path,
-            url_fetcher=url_fetcher,
-            allowed_root=allowed_root_path,
+    # Expand all references concurrently. Each _expand_reference is independent
+    # (no shared state during expansion) — a message with several @url: refs
+    # would otherwise pay one full web_extract round-trip per ref in series.
+    # gather preserves positional order, so we reassemble warnings/blocks in the
+    # original ref order exactly as the prior serial loop did; the token-budget
+    # check below is unchanged (it runs once, after all refs are expanded).
+    expanded = await asyncio.gather(
+        *(
+            _expand_reference(
+                ref,
+                cwd_path,
+                url_fetcher=url_fetcher,
+                allowed_root=allowed_root_path,
+            )
+            for ref in refs
         )
+    )
+    for warning, block in expanded:
         if warning:
             warnings.append(warning)
         if block:
@@ -185,8 +303,12 @@ async def preprocess_context_references_async(
             f"@ context injection warning: {injected_tokens} tokens exceeds the 25% soft limit ({soft_limit})."
         )
 
-    stripped = _remove_reference_tokens(message, refs)
-    final = stripped
+    # Leave the `@file:`/`@folder:` tokens where the user typed them. The token
+    # IS the reference, not scaffolding around it: clients render each one as an
+    # inline chip, so stripping them left a sentence with a hole in it ("review
+    # and ship") and made the desktop re-derive the refs from the attached block
+    # to show them as a detached list above the prose.
+    final = message
     if warnings:
         final = f"{final}\n\n--- Context Warnings ---\n" + "\n".join(f"- {warning}" for warning in warnings)
     if blocks:
@@ -229,6 +351,16 @@ async def _expand_reference(
             return None, f"🌐 {ref.raw} ({estimate_tokens_rough(content)} tokens)\n{content}"
     except Exception as exc:
         return f"{ref.raw}: {exc}", None
+
+    # Plugin-provided context references
+    provider = _context_reference_providers.get(ref.kind)
+    if provider is not None:
+        try:
+            plugin_content = await provider.expand(ref.target)
+            if plugin_content is not None:
+                return None, f"📌 {ref.raw} ({estimate_tokens_rough(plugin_content)} tokens)\n{plugin_content}"
+        except Exception as exc:
+            return f"{ref.raw}: plugin expansion error: {exc}", None
 
     return f"{ref.raw}: unsupported reference type", None
 
@@ -290,14 +422,16 @@ def _expand_git_reference(
     args: list[str],
     label: str,
 ) -> tuple[str | None, str | None]:
+    _popen_kwargs = {"creationflags": windows_hide_flags()} if IS_WINDOWS else {}
     try:
         result = subprocess.run(
             ["git", *args],
             cwd=cwd,
             capture_output=True,
-            text=True,
+            text=True, encoding='utf-8', errors='replace',
             timeout=30,
             stdin=subprocess.DEVNULL,
+            **_popen_kwargs,
         )
     except subprocess.TimeoutExpired:
         return f"{ref.raw}: git command timed out (30s)", None
@@ -325,9 +459,9 @@ async def _fetch_url_content(
 async def _default_url_fetcher(url: str) -> str:
     from tools.web_tools import web_extract_tool
 
-    raw = await web_extract_tool([url], format="markdown", use_llm_processing=True)
+    raw = await web_extract_tool([url], format="markdown")
     payload = json.loads(raw)
-    docs = payload.get("data", {}).get("documents", [])
+    docs = payload.get("results", [])
     if not docs:
         return ""
     doc = docs[0]
@@ -366,6 +500,37 @@ def _ensure_reference_path_allowed(path: Path) -> None:
         except ValueError:
             continue
         raise ValueError("path is a sensitive credential or internal Hermes path and cannot be attached")
+
+    # Anchor to the canonical read deny-list (agent/file_safety.get_read_block_error),
+    # the single source of truth used by the file/terminal read path. The narrow
+    # list above predates that guard and never caught the real credential stores:
+    # provider keys (auth.json), Anthropic OAuth tokens (.anthropic_oauth.json),
+    # MCP OAuth material (mcp-tokens/), webhook HMAC secrets, and project-local
+    # .env files. That gap matters because the gateway feeds UNTRUSTED remote
+    # message text into reference expansion, so `@file:~/.hermes/auth.json` from a
+    # chat peer would otherwise read the operator's keys straight into context.
+    # Routing through the canonical guard closes the gap today and keeps this path
+    # protected automatically whenever that deny-list grows.
+    try:
+        from agent.file_safety import get_read_block_error
+
+        if get_read_block_error(str(path)) is not None:
+            raise ValueError(
+                "path is a sensitive credential or internal Hermes path and cannot be attached"
+            )
+    except ValueError:
+        raise
+    except Exception:
+        # Fail CLOSED on the security path. This guard exists specifically to
+        # cover credential stores the narrow list above misses (auth.json,
+        # .anthropic_oauth.json, mcp-tokens/, ...). If the canonical lookup
+        # ever fails, silently falling through would re-open that exact hole —
+        # the gateway feeds untrusted remote text here, so a probe could then
+        # attach the operator's keys. Refuse instead: a spurious block on a
+        # legitimate file is a recoverable annoyance; a leaked credential is not.
+        raise ValueError(
+            "path could not be verified against the credential deny-list and cannot be attached"
+        )
 
 
 def _strip_trailing_punctuation(value: str) -> str:
@@ -410,19 +575,6 @@ def _parse_file_reference_value(value: str) -> tuple[str, int | None, int | None
         )
 
     return _strip_reference_wrappers(value), None, None
-
-
-def _remove_reference_tokens(message: str, refs: list[ContextReference]) -> str:
-    pieces: list[str] = []
-    cursor = 0
-    for ref in refs:
-        pieces.append(message[cursor:ref.start])
-        cursor = ref.end
-    pieces.append(message[cursor:])
-    text = "".join(pieces)
-    text = re.sub(r"\s{2,}", " ", text)
-    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
-    return text.strip()
 
 
 def _is_binary_file(path: Path) -> bool:
@@ -483,14 +635,16 @@ def _iter_visible_entries(path: Path, cwd: Path, limit: int) -> list[Path]:
 
 
 def _rg_files(path: Path, cwd: Path, limit: int) -> list[Path] | None:
+    _popen_kwargs = {"creationflags": windows_hide_flags()} if IS_WINDOWS else {}
     try:
         result = subprocess.run(
             ["rg", "--files", str(path.relative_to(cwd))],
             cwd=cwd,
             capture_output=True,
-            text=True,
+            text=True, encoding='utf-8', errors='replace',
             timeout=10,
             stdin=subprocess.DEVNULL,
+            **_popen_kwargs,
         )
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         return None
@@ -500,25 +654,40 @@ def _rg_files(path: Path, cwd: Path, limit: int) -> list[Path] | None:
     return files[:limit]
 
 
-def _human_bytes(n: int) -> str:
-    size = float(n)
-    for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024 or unit == "GB":
-            return f"{int(size)} {unit}" if unit == "B" else f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} GB"
+def _agent_visible_path(path: Path) -> str:
+    """Map a host path to the path the agent's tools can read in the active backend.
+
+    Under a container backend (docker) the gateway host path dangles inside the
+    sandbox — the container has its own filesystem and the host path is not
+    mounted. Files staged into an auto-mounted cache dir (``images/``,
+    ``attachments/``, ...) are translated to their in-container path via the
+    existing ``tools.credential_files`` machinery (#76577). Falls back to the
+    host path when the backend is local or translation is unavailable.
+    """
+    try:
+        # Desktop/in-process gateways may not have bridged ``terminal.*``
+        # config into ``TERMINAL_ENV`` at startup; run the idempotent bridge so
+        # the credential_files translation gate sees the active backend.
+        from tools.terminal_tool import _ensure_terminal_env_bridged
+
+        _ensure_terminal_env_bridged()
+        from tools.credential_files import to_agent_visible_cache_path
+
+        return to_agent_visible_cache_path(str(path))
+    except Exception:
+        return str(path)
 
 
 def _binary_reference_block(ref: ContextReference, path: Path) -> str:
     mime, _ = mimetypes.guess_type(path.name)
     mime = mime or "application/octet-stream"
     try:
-        size = _human_bytes(path.stat().st_size)
+        size = format_bytes(path.stat().st_size)
     except OSError:
         size = "unknown size"
     return (
         f"📎 {ref.raw} ({mime}, {size}) — binary file, not inlined as text. "
-        f"It is available on disk at `{path}`. Use your tools to work with it "
+        f"It is available on disk at `{_agent_visible_path(path)}`. Use your tools to work with it "
         f"(read or convert it, extract its text, or view/render it as needed); "
         f"do not tell the user the file type is unsupported."
     )

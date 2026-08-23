@@ -29,6 +29,8 @@ def mirror_to_session(
     source_label: str = "cli",
     thread_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    role: str = "assistant",
+    session_id: Optional[str] = None,
 ) -> bool:
     """
     Append a delivery-mirror message to the target session's transcript.
@@ -36,19 +38,43 @@ def mirror_to_session(
     Finds the gateway session that matches the given platform + chat_id,
     then writes a mirror entry to both the JSONL transcript and SQLite DB.
 
+    ``session_id``: when the caller already KNOWS the exact session (e.g. the
+    cron in_channel seed, which just created the row via
+    ``get_or_create_session``), pass it to skip the origin-scan heuristics
+    entirely. ``_find_session_id`` matches by origin (chat_id + user
+    preference with a multi-candidate bail-out), which is correct for
+    "mirror into whatever conversation lives here" callers but WRONG for a
+    caller holding the precise target — on a populated chat (flat session +
+    N per-message thread sessions sharing one chat_id) the scan can refuse
+    to guess and silently drop the mirror (live failure, Alice 2026-08-19:
+    'in_channel seed did NOT land').
+
+    ``role`` defaults to ``"assistant"`` — correct for the interactive
+    ``send_message`` mirror, where the mirrored text is the agent's own
+    outgoing reply (a genuine assistant turn). Callers mirroring text that is
+    NOT the agent speaking — e.g. a cron brief delivered out-of-band — must
+    pass ``role="user"``: the ``mirror``/``mirror_source`` metadata is dropped
+    at the SQLite boundary (only role+content persist), so on replay an
+    assistant-role mirror is indistinguishable from a real assistant turn and
+    produces ``assistant → assistant`` pairs that break strict-alternation
+    providers (issue #2221). A user-role mirror collapses safely via
+    ``repair_message_sequence``'s consecutive-user merge on every provider.
+
     Returns True if mirrored successfully, False if no matching session or error.
     All errors are caught -- this is never fatal.
     """
     try:
-        session_id = _find_session_id(
-            platform,
-            str(chat_id),
-            thread_id=thread_id,
-            user_id=user_id,
-        )
         if not session_id:
-            logger.debug(
-                "Mirror: no session found for %s:%s:%s:%s",
+            session_id = _find_session_id(
+                platform,
+                str(chat_id),
+                thread_id=thread_id,
+                user_id=user_id,
+            )
+        if not session_id:
+            logger.warning(
+                "Mirror: no session found for %s:%s thread=%s user=%s "
+                "(explicit_id=none, origin-scan bailed)",
                 platform,
                 chat_id,
                 thread_id,
@@ -57,7 +83,7 @@ def mirror_to_session(
             return False
 
         mirror_msg = {
-            "role": "assistant",
+            "role": role,
             "content": message_text,
             "timestamp": datetime.now().isoformat(),
             "mirror": True,
@@ -70,12 +96,17 @@ def mirror_to_session(
         return True
 
     except Exception as e:
-        logger.debug(
-            "Mirror failed for %s:%s:%s:%s: %s",
+        # WARNING with the exception: a silent mirror drop IS the cron
+        # continuation-amnesia bug (Alice 2026-08-19 — the seed's own
+        # deterministic session_id was in hand and the append STILL failed
+        # invisibly at debug level).
+        logger.warning(
+            "Mirror failed for %s:%s thread=%s user=%s session=%s: %s",
             platform,
             chat_id,
             thread_id,
             user_id,
+            session_id,
             e,
         )
         return False
@@ -90,14 +121,36 @@ def _find_session_id(
     """
     Find the active session_id for a platform + chat_id pair.
 
-    Scans sessions.json entries and matches where origin.chat_id == chat_id
-    on the right platform.  DM session keys don't embed the chat_id
-    (e.g. "agent:main:telegram:dm"), so we check the origin dict.
+    Queries state.db gateway session rows (primary source since #9006);
+    falls back to scanning sessions.json for pre-migration databases.
+    DM session keys don't embed the chat_id (e.g. "agent:main:telegram:dm"),
+    so we match on the persisted chat origin, not the key.
 
     When *user_id* is provided, prefer exact sender matches. If multiple
     same-chat candidates exist and none matches the user, return None instead
     of guessing and contaminating another participant's session.
     """
+    # Primary: state.db
+    try:
+        from hermes_state import SessionDB
+        db = SessionDB()
+        try:
+            finder = getattr(db, "find_session_by_origin", None)
+            if callable(finder):
+                session_id = finder(
+                    platform=platform,
+                    chat_id=chat_id,
+                    thread_id=thread_id,
+                    user_id=user_id,
+                )
+                if session_id:
+                    return str(session_id)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.debug("Mirror state.db session lookup failed: %s", e)
+
+    # Fallback: sessions.json (pre-migration databases)
     if not _SESSIONS_INDEX.exists():
         return None
 
@@ -111,6 +164,10 @@ def _find_session_id(
     candidates = []
 
     for _key, entry in data.items():
+        # Skip documentation/metadata sentinels (keys starting with "_", e.g.
+        # the gateway's "_README" note) — they are not session entries.
+        if str(_key).startswith("_") or not isinstance(entry, dict):
+            continue
         origin = entry.get("origin") or {}
         entry_platform = (origin.get("platform") or entry.get("platform", "")).lower()
 

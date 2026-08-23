@@ -1,8 +1,9 @@
 ---
 name: rug-check
-description: "Solana token safety diligence: mint/freeze authority, LP lock/burn, top-holder concentration, RugCheck score. Read-only — run before swapping into or launching alongside any token."
+description: "Assess Solana token safety before swaps or launches."
 version: 1.0.0
 author: ClawPump (built on Hermes)
+license: MIT
 tags: [solana, token-safety, rug-check, holders, due-diligence, defi, clawpump]
 platforms: [linux, macos, windows]
 prerequisites:

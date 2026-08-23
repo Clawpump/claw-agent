@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { clearClarifyRequest, setClarifyRequest } from './clarify'
 import {
+  $activeSessionAwaitingInput,
   $approvalRequest,
   $secretRequest,
   $sudoRequest,
@@ -8,6 +10,8 @@ import {
   clearApprovalRequest,
   clearSecretRequest,
   clearSudoRequest,
+  receiveApprovalRequest,
+  replayPendingApproval,
   setApprovalRequest,
   setSecretRequest,
   setSudoRequest
@@ -22,6 +26,7 @@ beforeEach(() => {
 
 afterEach(() => {
   clearAllPrompts()
+  clearClarifyRequest()
   $activeSessionId.set(null)
 })
 
@@ -55,9 +60,74 @@ describe('approval prompt store', () => {
   })
 
   it('carries allowPermanent so the bar can hide "Always allow"', () => {
-    setApprovalRequest({ allowPermanent: false, command: 'curl x | bash', description: 'content-security', sessionId: 's1' })
+    setApprovalRequest({
+      allowPermanent: false,
+      command: 'curl x | bash',
+      description: 'content-security',
+      sessionId: 's1'
+    })
 
     expect($approvalRequest.get()?.allowPermanent).toBe(false)
+  })
+
+  it('correlates clearing to the exact approval request id', () => {
+    setApprovalRequest({ command: 'x', description: 'd', requestId: 'r1', sessionId: 's1' })
+
+    clearApprovalRequest('s1', 'stale')
+    expect($approvalRequest.get()?.requestId).toBe('r1')
+    clearApprovalRequest('s1', 'r1')
+    expect($approvalRequest.get()).toBeNull()
+  })
+
+  it('acknowledges an approval only after parking it', async () => {
+    const calls: Array<[string, Record<string, unknown>]> = []
+
+    const gateway = {
+      request: async (method: string, params: Record<string, unknown>) => {
+        calls.push([method, params])
+
+        return { acknowledged: true }
+      }
+    }
+
+    await receiveApprovalRequest(gateway, {
+      command: 'x',
+      description: 'd',
+      requestId: 'r1',
+      sessionId: 's1'
+    })
+
+    expect($approvalRequest.get()?.requestId).toBe('r1')
+    expect(calls).toEqual([['approval.received', { request_id: 'r1', session_id: 's1' }]])
+  })
+
+  it('replays and acknowledges the oldest unresolved approval after reconnect', async () => {
+    const calls: Array<[string, Record<string, unknown>]> = []
+
+    const gateway = {
+      request: async (method: string, params: Record<string, unknown>) => {
+        calls.push([method, params])
+
+        if (method === 'approval.pending') {
+          return {
+            approvals: [
+              { command: 'first', description: 'd1', request_id: 'r1' },
+              { command: 'second', description: 'd2', request_id: 'r2' }
+            ]
+          }
+        }
+
+        return { acknowledged: true }
+      }
+    }
+
+    await replayPendingApproval(gateway, 's1')
+
+    expect($approvalRequest.get()?.requestId).toBe('r1')
+    expect(calls).toEqual([
+      ['approval.pending', { session_id: 's1' }],
+      ['approval.received', { request_id: 'r1', session_id: 's1' }]
+    ])
   })
 })
 
@@ -123,5 +193,28 @@ describe('clearAllPrompts', () => {
 
     $activeSessionId.set('s2')
     expect($approvalRequest.get()?.command).toBe('y')
+  })
+})
+
+describe('$activeSessionAwaitingInput', () => {
+  it('is true while any blocking prompt (clarify or approval/sudo/secret) is parked on the active session', () => {
+    expect($activeSessionAwaitingInput.get()).toBe(false)
+
+    setApprovalRequest({ command: 'x', description: 'd', sessionId: 's1' })
+    expect($activeSessionAwaitingInput.get()).toBe(true)
+
+    clearApprovalRequest('s1')
+    expect($activeSessionAwaitingInput.get()).toBe(false)
+
+    setClarifyRequest({ choices: null, multiSelect: false, question: 'q', requestId: 'c1', sessionId: 's1' })
+    expect($activeSessionAwaitingInput.get()).toBe(true)
+  })
+
+  it('ignores a prompt parked on a background session', () => {
+    setSudoRequest({ requestId: 'r', sessionId: 's2' })
+    expect($activeSessionAwaitingInput.get()).toBe(false)
+
+    $activeSessionId.set('s2')
+    expect($activeSessionAwaitingInput.get()).toBe(true)
   })
 })

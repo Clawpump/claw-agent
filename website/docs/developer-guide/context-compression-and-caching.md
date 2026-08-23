@@ -82,9 +82,19 @@ All compression settings are read from `config.yaml` under the `compression` key
 compression:
   enabled: true              # Enable/disable compression (default: true)
   threshold: 0.50            # Fraction of context window (default: 0.50 = 50%)
+  # model_thresholds:        # Per-model threshold overrides (substring match,
+  #   "glm-5.2": 0.40        # longest key wins). See "Per-model threshold
+  #   "claude-sonnet": 0.35  # overrides" below.
   target_ratio: 0.20         # How much of threshold to keep as tail (default: 0.20)
+  tail_mode: legacy          # Tail retention policy: legacy | lean (default: legacy)
   protect_last_n: 20         # Minimum protected tail messages (default: 20)
+  min_tail_user_messages: 1  # Real user messages guaranteed in the tail (default: 1)
   codex_gpt55_autoraise: true  # gpt-5.5 on Codex OAuth: raise trigger to 85% (default: true)
+  codex_gpt55_autoraise_notice: true  # Show the one-time autoraise notice (default: true)
+  codex_app_server_auto: native  # native|hermes|off for Codex app-server thread compaction
+  codex_responses_native: false  # gpt-5.6 on direct OpenAI/Codex: server-side compaction (opt-in)
+  codex_responses_compact_threshold: 200000  # Server-side compaction trigger (input tokens)
+  in_place: true             # Compact on the same session id, no rotation (default: true)
 
 # Summarization model/provider configured under auxiliary:
 auxiliary:
@@ -99,10 +109,63 @@ auxiliary:
 | Parameter | Default | Range | Description |
 |-----------|---------|-------|-------------|
 | `threshold` | `0.50` | 0.0-1.0 | Compression triggers when prompt tokens ≥ `threshold × context_length` |
-| `target_ratio` | `0.20` | 0.10-0.80 | Controls tail protection token budget: `threshold_tokens × target_ratio` |
+| `model_thresholds` | `{}` | map | Per-model overrides of `threshold`. Keys are substring-matched against the model name (longest match wins). The small-context floor still applies on top (see below) |
+| `target_ratio` | `0.20` | 0.10-0.80 | Controls tail protection token budget: `threshold_tokens × target_ratio` (legacy mode only — `lean` uses its own clamp) |
+| `tail_mode` | `legacy` | `legacy`, `lean` | Tail retention policy. `legacy` keeps a `target_ratio`-sized verbatim tail (~100K+ tokens on big-window models). `lean` keeps a clamped tail of `2.5% × context window` (10K floor, 25K cap) and instead carries continuity in the summary: chunked identifier-preserving digests of the compacted region, a mechanically extracted anchor index (PR numbers, SHAs, paths, error strings — regex, never paraphrased), every real user message quoted verbatim (newest-first budget), and a `session_search` recovery pointer so the agent can re-access anything summarized away. Result on 500K-token real sessions: ~49K retained vs ~162K, with higher recall when paired with recovery (see `evals/compaction/results/`). Costs a few extra summarizer calls at the compaction boundary. Old tool results inside the lean tail are demoted to one-line stubs carrying a recovery pointer |
 | `protect_last_n` | `20` | ≥1 | Minimum number of recent messages always preserved |
+| `min_tail_user_messages` | `1` | ≥1 | Minimum number of REAL (actionable) user messages guaranteed to survive in the uncompressed tail. `1` = the existing single last-user anchor (behavior-preserving default). Raise to e.g. `3` to keep the last 3 real user turns verbatim even when bulky tool outputs fill the tail token budget. Blank platform echoes, compaction handoffs, and synthetic continuation rows never count toward N. The guarantee wins over the tail token budget — the tail may exceed the budget when the anchor pulls the cut back |
 | `protect_first_n` | `3` | (hardcoded) | System prompt + first exchange always preserved |
+| `idle_compact_after_seconds` | `0` | ≥0 seconds | Opt-in: compact up front when a session resumes after this many seconds idle (0 = disabled). Skips when context ≤ threshold × target_ratio; honors cooldown/anti-thrash/lock guards |
 | `codex_gpt55_autoraise` | `true` | bool | Raise the trigger to 85% for gpt-5.5 on the ChatGPT Codex OAuth route (see below). Set `false` to keep the global `threshold` |
+| `codex_gpt55_autoraise_notice` | `true` | bool | Show the one-time Codex gpt-5.5 autoraise notice. Set `false` to keep the 85% autoraise but suppress the banner |
+| `codex_app_server_auto` | `native` | `native`, `hermes`, `off` | Thread-compaction mode for Codex app-server sessions (see below) |
+| `codex_responses_native` | `false` | bool | Opt in to OpenAI's server-side compaction on the Responses API. Engages only for gpt-5.6-family models on the direct OpenAI API or a ChatGPT Codex subscription (see below) |
+| `codex_responses_compact_threshold` | `200000` | ≥1 tokens | Server-side compaction trigger in input tokens. Clamped below the local compression threshold at request time so the server compacts first |
+| `in_place` | `true` | bool | Compact on the same session id instead of rotating to a new one (see below) |
+
+### In-place compaction (single stable session id)
+
+With `compression.in_place: true` (the default), a compaction **rewrites the live message list on the same session id**: the system prompt is rebuilt, the summarized middle is swapped in, and the pre-compaction turns are soft-archived under the same id (`active=0, compacted=1` in the session store) — still searchable via `session_search` and recoverable, never deleted. There is no `parent_session_id` chain and no `name #N` renumbering; one conversation keeps one durable id for its whole life. This eliminated the session-rotation bug cluster (lost `/goal` state, orphaned sessions, search gaps across boundaries).
+
+Consumers observe the mode rather than diffing session ids:
+
+- The `session:compress` event carries `in_place: true/false` and `old_session_id` (empty string in in-place mode, since there is no old id).
+- The gateway re-baselines transcript handling from the agent's rotation-independent `_last_compaction_in_place` flag, not from an id-change diff.
+
+Set `in_place: false` to restore the legacy rotating path, where each compaction commits a new session id linked to the previous one via `parent_session_id`.
+
+### Per-model threshold overrides
+
+`compression.model_thresholds` lets you trigger compaction at different points
+depending on the active model — useful when you swap between models with very
+different context windows (e.g. a 1M-context model can compress later while a
+128K model should compress earlier):
+
+```yaml
+compression:
+  threshold: 0.50
+  model_thresholds:
+    "glm-5.2": 0.40
+    "glm-5.2-1M": 0.25
+    "claude-sonnet": 0.35
+```
+
+Resolution rules:
+
+- Keys are **substring-matched** against the model name; the **longest
+  matching key wins** (`glm-5.2-1M` beats `glm-5.2` for model `glm-5.2-1M`).
+- When no key matches (or the map is empty), the global `threshold` applies.
+- The override is re-resolved on every `/model` switch; switching to a model
+  with no matching key falls back to the global `threshold`.
+- The **small-context floor still applies on top** of overrides (raise-only):
+  models with context windows below 512K are floored at `0.75`, so an
+  override below the floor is raised to `0.75`, while an override above it
+  (e.g. `0.80`) wins.
+
+Plugin context engines can reuse the same resolution logic via
+`from agent.context_compressor import resolve_model_threshold`; engines that
+override `update_model()` own their own compaction policy and may ignore the
+map.
 
 ### Codex gpt-5.5 threshold autoraise
 
@@ -111,13 +174,74 @@ The ChatGPT Codex OAuth backend hard-caps gpt-5.5 at a **272K** context window
 GitHub Copilot). At the default 50% trigger, compaction would fire at ~136K —
 half the window the model can actually use. When the active route is Codex
 OAuth (`provider: openai-codex`) and the model is gpt-5.5, Hermes raises the
-trigger to **85%** (~231K) and prints a one-time notice with the opt-out
-command. Only this exact route is affected; gpt-5.5 on any other provider keeps
-your global `threshold`. To opt back down to the global value:
+trigger to **85%** (~231K) and shows a notice with the opt-out command. The
+notice is shown once per profile — a marker under `$HERMES_HOME`
+(`.codex_gpt55_autoraise_notice`) records that it ran, so repeated agent/session
+inits (e.g. every inbound gateway message) don't re-emit it; if the raised
+threshold later changes it re-notifies once. Only this exact route is affected;
+gpt-5.5 on any other provider keeps your global `threshold`. To opt back down to
+the global value:
 
 ```bash
 hermes config set compression.codex_gpt55_autoraise false
 ```
+
+To keep the 85% autoraise but hide only the one-time notice:
+
+```bash
+hermes config set compression.codex_gpt55_autoraise_notice false
+```
+
+### Codex app-server thread compaction
+
+Codex app-server sessions (`api_mode: codex_app_server` — the codex CLI/agent
+runtime) are different from every other route: the codex agent owns the backing
+thread context, so Hermes' auxiliary summarizer cannot shrink it — rewriting the
+local transcript mirror leaves the real thread growing unbounded until a hard
+context reset. For this runtime, compaction goes through the app-server's own
+mechanism instead:
+
+- Manual compaction (`/compress`) asks the app-server to compact the thread
+  (`thread/compact/start`) and waits for the compaction turn to complete.
+- Automatic compaction is controlled by `compression.codex_app_server_auto`:
+  the default `native` lets the app-server decide when to compact and Hermes
+  records the resulting compaction events (compression counters, session
+  events). Set `hermes` to let Hermes' compression threshold initiate
+  app-server compaction, or `off` to disable Hermes-initiated automatic
+  compaction entirely (codex may still compact natively).
+
+Hermes' local transcript is never rewritten on this runtime — state.db records
+the compaction boundary while the visible transcript stays intact. All other
+routes (including Codex OAuth chat sessions) keep Hermes' summary compressor.
+
+### Native Responses compaction (gpt-5.6 on direct OpenAI / Codex subscription)
+
+OpenAI's Responses API supports server-side compaction: when a request includes
+`context_management: [{type: "compaction", compact_threshold: N}]` and the
+rendered input crosses N tokens, the server prunes older context into an opaque
+encrypted `compaction` output item. Hermes captures that item into the
+assistant message's existing replay sidecar and sends it back on subsequent
+turns, standing in for the pruned history — long-horizon recall without a
+client-side summary pass, and ZDR-friendly (`store: false`, no
+`previous_response_id`).
+
+Opt in with `compression.codex_responses_native: true`. The gate is deliberately
+narrow, re-checked on every request:
+
+- **Models:** the gpt-5.6 family only. Other models fail server-side when the
+  field is present (gpt-5.1/5.2 return HTTP 500 or stall the stream — there is
+  no structured rejection to downgrade on, verified live Aug 2026).
+- **Routes:** `api.openai.com` (OpenAI API key) or the ChatGPT Codex backend
+  (Codex subscription OAuth) only. xAI, GitHub/Copilot, OpenRouter, relays, and
+  local servers never see the field.
+
+Everything else about compression is unchanged: the local compressor stays
+armed as the fallback owner (the native threshold is clamped ~8K tokens below
+the local trigger so the server compacts first), and a structured provider
+rejection of the field disables native compaction for the session and retries
+the request without it. Switching the session to a non-eligible model or route
+simply stops the field from being sent — captured checkpoints are dropped from
+replay by the existing cross-issuer guard when the endpoint changes.
 
 ### Computed Values (for a 200K context model at defaults)
 
@@ -352,6 +476,16 @@ The marker is applied differently based on content type:
 
 4. **TTL selection**: Default is `5m` (5 minutes). Use `1h` for long-running
    sessions where the user takes breaks between turns.
+
+5. **Model identity is part of the cache key**: Provider-side caches are scoped
+   to the model (and account/API key) serving the request. Any mid-conversation
+   model change — an explicit `/model` switch, primary-model fallback, or a
+   credential-pool rotation onto a different account — means the next request
+   gets zero cache hits and re-reads the full conversation at undiscounted
+   input price. This is inherent to how provider caches work, not something
+   Hermes can avoid; user-facing docs for `/model`, fallback providers, and
+   credential pools carry cost warnings for this reason. Don't add features
+   that silently swap the model or credentials mid-session.
 
 ### Enabling Prompt Caching
 

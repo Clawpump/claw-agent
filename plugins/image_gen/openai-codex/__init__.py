@@ -14,25 +14,69 @@ Selection precedence for the tier (first hit wins):
 3. ``image_gen.model`` in ``config.yaml`` (when it's one of our tier IDs)
 4. :data:`DEFAULT_MODEL` — ``gpt-image-2-medium``
 
-Output is saved as PNG under ``$HERMES_HOME/cache/images/``.
+Output is saved as PNG under ``$HERMES_HOME/cache/images/``. Source images for
+image-to-image/editing are sent as Responses ``input_image`` content parts.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
+import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from agent.image_gen_provider import (
     DEFAULT_ASPECT_RATIO,
     ImageGenProvider,
     error_response,
+    normalize_reference_images,
     resolve_aspect_ratio,
     save_b64_image,
     success_response,
 )
 
 logger = logging.getLogger(__name__)
+
+
+# NOTE: do NOT reintroduce an "account capability" classifier keyed on
+# ``Tool choice 'image_generation' not found in 'tools' parameter``. That HTTP
+# 400 is a *request-shape* rejection (the Codex backend resolves tool_choice as
+# a function-tool name and never recognizes hosted-tool entries) — it is
+# emitted for every account, including accounts where image generation works.
+# A previous version of this file translated that 400 into "Image generation is
+# not enabled for the current Codex account. Switch the image provider to
+# OpenAI API key, FAL, or xAI.", which reported a universal bug in our own
+# payload as the user's entitlement problem and sent people away from a
+# provider that was never actually tried. The request-shape bug is fixed by
+# omitting tool_choice (see ``_build_responses_payload``); any remaining HTTP
+# error must surface verbatim so it stays diagnosable. See issues #19505,
+# #49008 and #31335.
+
+_MAX_ERROR_BODY_CHARS = 500
+
+
+def _summarize_error_body(body: str) -> str:
+    """Return a bounded, information-preserving summary of an error body.
+
+    Prefers the parsed ``error.message`` field, because a blind head-truncation
+    of the raw body can cut the actual message off entirely — Codex error
+    payloads sometimes carry hundreds of bytes of leading metadata, so
+    ``body[:500]`` yielded a wall of padding and no diagnosis. Falls back to a
+    truncated raw body for non-JSON responses.
+    """
+    text = body or ""
+    try:
+        payload = json.loads(text)
+        error = payload.get("error") if isinstance(payload, dict) else None
+        message = error.get("message") if isinstance(error, dict) else None
+        if isinstance(message, str) and message.strip():
+            return message.strip()[:_MAX_ERROR_BODY_CHARS]
+    except (TypeError, ValueError):
+        pass
+    return text[:_MAX_ERROR_BODY_CHARS]
+
 
 
 # ---------------------------------------------------------------------------
@@ -76,8 +120,18 @@ _SIZES = {
 _CODEX_CHAT_MODEL = "gpt-5.5"
 _CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 _CODEX_INSTRUCTIONS = (
-    "You are an assistant that must fulfill image generation requests by "
-    "using the image_generation tool when provided."
+    "You are an assistant that must fulfill image generation and image editing "
+    "requests by using the image_generation tool when provided."
+)
+
+_MAX_REFERENCE_IMAGES = 16
+_MAX_INPUT_IMAGE_BYTES = 25 * 1024 * 1024
+# gpt-image-2's Responses ``input_image`` accepts raster formats only. The
+# shared magic-byte sniffer also recognizes SVG/TIFF/ICO, which the API
+# rejects server-side — gate to this allowlist so unsupported inputs fail
+# locally with a clear error instead of an opaque HTTP 400.
+_ACCEPTED_INPUT_MIME = frozenset(
+    {"image/png", "image/jpeg", "image/gif", "image/webp"}
 )
 
 
@@ -143,8 +197,125 @@ def _read_codex_access_token() -> Optional[str]:
         return None
 
 
-def _build_responses_payload(*, prompt: str, size: str, quality: str) -> Dict[str, Any]:
+def _sniff_image_mime(raw: bytes) -> Optional[str]:
+    """Return a safe raster image MIME from magic bytes (not filename labels).
+
+    Delegates magic-byte detection to the shared sniffer in
+    ``agent.image_routing`` (single source of truth), then gates the result
+    to :data:`_ACCEPTED_INPUT_MIME` — the raster formats gpt-image-2's
+    ``input_image`` actually accepts. SVG/TIFF/ICO (which the shared sniffer
+    also recognizes) are rejected here so they fail locally with a clear
+    error instead of an opaque server-side HTTP 400.
+    """
+    from agent.image_routing import _sniff_mime_from_bytes
+
+    mime = _sniff_mime_from_bytes(raw)
+    if mime in _ACCEPTED_INPUT_MIME:
+        return mime
+    return None
+
+
+def _data_url_to_input_image_url(value: str) -> str:
+    """Validate and canonicalize a data:image URL for Responses input_image."""
+    if "," not in value:
+        raise ValueError("Image data URL is missing a comma separator")
+    header, data = value.split(",", 1)
+    header_lc = header.lower()
+    if not header_lc.startswith("data:image/") or ";base64" not in header_lc:
+        raise ValueError("Only base64 data:image URLs are supported as Codex image inputs")
+    raw = base64.b64decode(data, validate=True)
+    if len(raw) > _MAX_INPUT_IMAGE_BYTES:
+        raise ValueError("Image data URL exceeds 25MB cap")
+    mime = _sniff_image_mime(raw)
+    if mime is None:
+        raise ValueError("Image data URL does not contain supported image bytes")
+    encoded = base64.b64encode(raw).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
+def _local_image_to_data_url(value: str) -> str:
+    """Read a local image path and return a validated data:image URL."""
+    try:
+        from agent.file_safety import get_read_block_error
+
+        blocked = get_read_block_error(value)
+        if blocked:
+            raise ValueError(blocked)
+    except ValueError:
+        raise
+    except Exception as exc:
+        logger.debug("Codex image input read guard unavailable: %s", exc)
+
+    path = Path(os.path.expanduser(value)).resolve()
+    if not path.is_file():
+        raise ValueError(f"Image input path does not exist or is not a file: {value}")
+    size = path.stat().st_size
+    if size <= 0:
+        raise ValueError(f"Image input path is empty: {value}")
+    if size > _MAX_INPUT_IMAGE_BYTES:
+        raise ValueError(f"Image input path exceeds 25MB cap: {value}")
+    raw = path.read_bytes()
+    mime = _sniff_image_mime(raw)
+    if mime is None:
+        raise ValueError(f"Image input path is not a supported image: {value}")
+    encoded = base64.b64encode(raw).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
+def _to_input_image_part(value: str) -> Dict[str, str]:
+    """Convert a URL/data URL/local path into a Responses input_image part."""
+    candidate = (value or "").strip()
+    if not candidate:
+        raise ValueError("Blank image input")
+    lowered = candidate.lower()
+    if lowered.startswith("http://") or lowered.startswith("https://"):
+        image_url = candidate
+    elif lowered.startswith("data:"):
+        image_url = _data_url_to_input_image_url(candidate)
+    else:
+        image_url = _local_image_to_data_url(candidate)
+    return {"type": "input_image", "image_url": image_url}
+
+
+def _normalize_input_images(
+    image_url: Optional[str],
+    reference_image_urls: Optional[List[str]],
+) -> List[Dict[str, str]]:
+    """Collect primary + reference images as ordered Responses content parts."""
+    values: List[str] = []
+    if isinstance(image_url, str) and image_url.strip():
+        values.append(image_url.strip())
+    for ref in (normalize_reference_images(reference_image_urls) or []):
+        values.append(ref)
+    values = values[:_MAX_REFERENCE_IMAGES]
+    return [_to_input_image_part(value) for value in values]
+
+
+# Progressive preview frames (partial_image_b64) are intermediate renders.
+# Saving them as finals produced the long-running "smear" failure mode on the
+# Codex Responses path. Defense in depth:
+#   1) request layer prefers no progressive frames when the backend honors it
+#   2) extractor never lets a partial overwrite a final result
+#   3) generate() only delivers source=final; partial-only / empty are not success
+# Live streams sometimes still emit a partial event even with 0; that is fine as
+# long as only a final ``result`` can be saved.
+_PARTIAL_IMAGES_REQUESTED = 0
+# Content-agnostic retries when the stream does not yield a final result
+# (empty stream or progressive-only). No prompt-class branching.
+_NONFINAL_RETRIES = 1
+
+
+def _build_responses_payload(
+    *,
+    prompt: str,
+    size: str,
+    quality: str,
+    input_images: Optional[List[Dict[str, str]]] = None,
+) -> Dict[str, Any]:
     """Build the Codex Responses request body for an image_generation call."""
+    content: List[Dict[str, Any]] = [{"type": "input_text", "text": prompt}]
+    if input_images:
+        content.extend(input_images)
     return {
         "model": _CODEX_CHAT_MODEL,
         "store": False,
@@ -152,7 +323,7 @@ def _build_responses_payload(*, prompt: str, size: str, quality: str) -> Dict[st
         "input": [{
             "type": "message",
             "role": "user",
-            "content": [{"type": "input_text", "text": prompt}],
+            "content": content,
         }],
         "tools": [{
             "type": "image_generation",
@@ -161,38 +332,77 @@ def _build_responses_payload(*, prompt: str, size: str, quality: str) -> Dict[st
             "quality": quality,
             "output_format": "png",
             "background": "opaque",
-            "partial_images": 1,
+            # Prefer 0 progressive preview frames. Preview frames can arrive
+            # without a later final ``result`` and look like smeared /
+            # unfinished images if saved as the deliverable. Even when the
+            # backend still emits a partial event, generate() refuses to
+            # deliver anything except source=final.
+            "partial_images": _PARTIAL_IMAGES_REQUESTED,
         }],
-        "tool_choice": {
-            "type": "allowed_tools",
-            "mode": "required",
-            "tools": [{"type": "image_generation"}],
-        },
+        # No ``tool_choice`` is sent: the chatgpt.com/backend-api/codex backend
+        # rejects every shape we have for forcing the hosted ``image_generation``
+        # tool. ``{"type": "allowed_tools", "mode": "required", "tools": [{"type":
+        # "image_generation"}]}`` (and the simpler ``{"type": "image_generation"}``
+        # form) both 400 with ``Tool choice 'image_generation' not found in 'tools'
+        # parameter`` — the backend looks up tool_choice as a *function* name and
+        # never recognizes hosted-tool entries. Letting the host model decide is
+        # the only shape Codex currently accepts; the ``instructions`` above are
+        # what nudge it toward the tool. See issue #19505.
         "stream": True,
     }
 
 
+def _extract_image_candidates(value: Any) -> Tuple[Optional[str], Optional[str]]:
+    """Return ``(final_result_b64, latest_partial_b64)`` from a payload tree.
+
+    Final ``image_generation_call.result`` and progressive ``partial_image_b64``
+    are tracked separately so a partial can never overwrite a genuine final,
+    including when both coexist in the same event payload.
+    """
+    result_b64: Optional[str] = None
+    partial_b64: Optional[str] = None
+
+    def walk(node: Any) -> None:
+        nonlocal result_b64, partial_b64
+        if isinstance(node, dict):
+            if node.get("type") == "image_generation_call":
+                result = node.get("result")
+                if isinstance(result, str) and result:
+                    result_b64 = result
+            partial = node.get("partial_image_b64")
+            if isinstance(partial, str) and partial:
+                partial_b64 = partial
+            for child in node.values():
+                walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
+
+    walk(value)
+    return result_b64, partial_b64
+
+
 def _extract_image_b64(value: Any) -> Optional[str]:
-    """Return the newest image b64 embedded in a Responses event payload."""
-    found: Optional[str] = None
-    if isinstance(value, dict):
-        if value.get("type") == "image_generation_call":
-            result = value.get("result")
-            if isinstance(result, str) and result:
-                found = result
-        partial = value.get("partial_image_b64")
-        if isinstance(partial, str) and partial:
-            found = partial
-        for child in value.values():
-            nested = _extract_image_b64(child)
-            if nested:
-                found = nested
-    elif isinstance(value, list):
-        for child in value:
-            nested = _extract_image_b64(child)
-            if nested:
-                found = nested
-    return found
+    """Return image b64 from a payload, preferring final result over partial.
+
+    Progressive ``partial_image_b64`` is only used when no final
+    ``image_generation_call.result`` is present in the same payload tree.
+    """
+    result_b64, partial_b64 = _extract_image_candidates(value)
+    return result_b64 or partial_b64
+
+
+def _png_pixel_size(raw: bytes) -> Optional[str]:
+    """Return ``\"{w}x{h}\"`` for a PNG payload, or None if not a PNG IHDR."""
+    import struct
+
+    if len(raw) < 24 or raw[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    # IHDR: length(4) + type(4) + width(4) + height(4)
+    if raw[12:16] != b"IHDR":
+        return None
+    width, height = struct.unpack(">II", raw[16:24])
+    return f"{width}x{height}"
 
 
 def _iter_sse_json(response: Any):
@@ -242,8 +452,22 @@ def _iter_sse_json(response: Any):
         yield payload
 
 
-def _collect_image_b64(token: str, *, prompt: str, size: str, quality: str) -> Optional[str]:
-    """Stream a Codex Responses image_generation call and return the b64 image."""
+def _collect_image_b64(
+    token: str,
+    *,
+    prompt: str,
+    size: str,
+    quality: str,
+    input_images: Optional[List[Dict[str, str]]] = None,
+) -> Optional[Dict[str, str]]:
+    """Stream a Codex Responses image_generation call.
+
+    Returns ``{\"b64\": ..., \"source\": \"final\"|\"partial\"}`` or ``None``.
+
+    Final ``result`` frames are preferred across the whole stream. A progressive
+    ``partial_image_b64`` is retained only when no final result ever arrives;
+    callers must not treat partial-only as an unconditional success.
+    """
     import httpx
     from agent.auxiliary_client import _codex_cloudflare_headers
 
@@ -253,26 +477,38 @@ def _collect_image_b64(token: str, *, prompt: str, size: str, quality: str) -> O
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     })
-    payload = _build_responses_payload(prompt=prompt, size=size, quality=quality)
+    payload = _build_responses_payload(
+        prompt=prompt,
+        size=size,
+        quality=quality,
+        input_images=input_images,
+    )
     timeout = httpx.Timeout(300.0, connect=30.0, read=300.0, write=30.0, pool=30.0)
 
-    image_b64: Optional[str] = None
+    final_b64: Optional[str] = None
+    partial_b64: Optional[str] = None
     with httpx.Client(timeout=timeout, headers=headers) as http:
         with http.stream("POST", f"{_CODEX_BASE_URL}/responses", json=payload) as response:
             try:
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 exc.response.read()
-                body = exc.response.text[:500]
                 raise RuntimeError(
-                    f"Codex Responses API returned HTTP {exc.response.status_code}: {body}"
+                    f"Codex Responses API returned HTTP {exc.response.status_code}: "
+                    f"{_summarize_error_body(exc.response.text)}"
                 ) from exc
             for event in _iter_sse_json(response):
-                found = _extract_image_b64(event)
-                if found:
-                    image_b64 = found
+                result_b64, event_partial = _extract_image_candidates(event)
+                if result_b64:
+                    final_b64 = result_b64
+                if event_partial:
+                    partial_b64 = event_partial
 
-    return image_b64
+    if final_b64:
+        return {"b64": final_b64, "source": "final"}
+    if partial_b64:
+        return {"b64": partial_b64, "source": "partial"}
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +555,7 @@ class OpenAICodexImageGenProvider(ImageGenProvider):
         return {
             "name": "OpenAI (Codex auth)",
             "badge": "free",
-            "tag": "gpt-image-2 via ChatGPT/Codex OAuth — no API key required (text-to-image only)",
+            "tag": "gpt-image-2 via ChatGPT/Codex OAuth — no API key required; supports text and image inputs",
             "env_vars": [],
             "post_setup_hint": (
                 "Sign in with `hermes auth codex` (or `hermes setup` → Codex) "
@@ -328,12 +564,11 @@ class OpenAICodexImageGenProvider(ImageGenProvider):
         }
 
     def capabilities(self) -> Dict[str, Any]:
-        # The Codex Responses image_generation tool path is text-to-image
-        # only here. Image-to-image / editing via Codex OAuth is not wired —
-        # users who need editing should use the `openai` (API key), `fal`, or
-        # `xai` backends. Declaring text-only keeps the dynamic tool schema
-        # honest so the model doesn't attempt an unsupported edit.
-        return {"modalities": ["text"], "max_reference_images": 0}
+        # The Codex Responses image_generation tool accepts source/reference
+        # images as `input_image` message content parts. Keep this capability
+        # honest so the dynamic `image_generate` schema encourages identity-
+        # preserving edits instead of unrelated text-to-image redraws.
+        return {"modalities": ["text", "image"], "max_reference_images": _MAX_REFERENCE_IMAGES}
 
     def generate(
         self,
@@ -346,21 +581,6 @@ class OpenAICodexImageGenProvider(ImageGenProvider):
     ) -> Dict[str, Any]:
         prompt = (prompt or "").strip()
         aspect = resolve_aspect_ratio(aspect_ratio)
-
-        # Image-to-image / editing is not supported on the Codex OAuth path.
-        # Surface a clear, actionable error instead of silently ignoring the
-        # source image and producing an unrelated picture.
-        if (isinstance(image_url, str) and image_url.strip()) or reference_image_urls:
-            return error_response(
-                error=(
-                    "This model is not capable of image-to-image / editing. "
-                    "Please provide a text-only prompt (drop image_url and "
-                    "reference_image_urls)."
-                ),
-                error_type="modality_unsupported",
-                provider="openai-codex",
-                aspect_ratio=aspect,
-            )
 
         if not prompt:
             return error_response(
@@ -409,12 +629,44 @@ class OpenAICodexImageGenProvider(ImageGenProvider):
             )
 
         try:
-            b64 = _collect_image_b64(
-                token,
+            input_images = _normalize_input_images(image_url, reference_image_urls)
+        except Exception as exc:
+            return error_response(
+                error=f"Invalid image input for Codex image editing: {exc}",
+                error_type="invalid_image_input",
+                provider="openai-codex",
+                model=tier_id,
                 prompt=prompt,
-                size=size,
-                quality=meta["quality"],
+                aspect_ratio=aspect,
             )
+
+        try:
+            collected: Optional[Dict[str, str]] = None
+            for attempt in range(_NONFINAL_RETRIES + 1):
+                collected = _collect_image_b64(
+                    token,
+                    prompt=prompt,
+                    size=size,
+                    quality=meta["quality"],
+                    input_images=input_images or None,
+                )
+                if collected and collected.get("source") == "final" and collected.get("b64"):
+                    break
+                if attempt < _NONFINAL_RETRIES:
+                    kind = (
+                        "progressive-only partial frame"
+                        if collected and collected.get("source") == "partial"
+                        else "no image_generation_call result"
+                    )
+                    logger.warning(
+                        "Codex image stream ended with %s (attempt %s/%s); "
+                        "retrying once before failing closed.",
+                        kind,
+                        attempt + 1,
+                        _NONFINAL_RETRIES + 1,
+                    )
+                    continue
+                break
         except Exception as exc:
             logger.debug("Codex image generation failed", exc_info=True)
             return error_response(
@@ -426,9 +678,12 @@ class OpenAICodexImageGenProvider(ImageGenProvider):
                 aspect_ratio=aspect,
             )
 
-        if not b64:
+        if not collected or not collected.get("b64"):
             return error_response(
-                error="Codex response contained no image_generation_call result",
+                error=(
+                    "Codex response contained no image_generation_call result "
+                    f"after {_NONFINAL_RETRIES + 1} attempt(s)"
+                ),
                 error_type="empty_response",
                 provider="openai-codex",
                 model=tier_id,
@@ -436,7 +691,46 @@ class OpenAICodexImageGenProvider(ImageGenProvider):
                 aspect_ratio=aspect,
             )
 
+        image_source = collected.get("source") or "unknown"
+        b64 = collected["b64"]
+
+        # Defense in depth: never deliver a progressive-only frame as success.
+        # Partials are intermediate previews and have presented as smeared /
+        # unfinished images when saved as finals.
+        if image_source != "final":
+            pixel_hint = None
+            try:
+                import base64 as _b64mod
+
+                pixel_hint = _png_pixel_size(_b64mod.b64decode(b64, validate=False))
+            except Exception:
+                pixel_hint = None
+            detail = (
+                "Codex returned only a progressive partial image frame after "
+                f"{_NONFINAL_RETRIES + 1} attempt(s); refusing to save it "
+                "as a final deliverable."
+            )
+            if pixel_hint:
+                detail = f"{detail} partial_pixel_size={pixel_hint}."
+            err = error_response(
+                error=detail,
+                error_type="incomplete_image",
+                provider="openai-codex",
+                model=tier_id,
+                prompt=prompt,
+                aspect_ratio=aspect,
+            )
+            err["image_source"] = image_source
+            err["requested_size"] = size
+            err["partial_pixel_size"] = pixel_hint
+            err["nonfinal_retries"] = _NONFINAL_RETRIES
+            return err
+
         try:
+            import base64 as _b64mod
+
+            raw_bytes = _b64mod.b64decode(b64)
+            pixel_size = _png_pixel_size(raw_bytes)
             saved_path = save_b64_image(b64, prefix=f"openai_codex_{tier_id}")
         except Exception as exc:
             return error_response(
@@ -454,7 +748,15 @@ class OpenAICodexImageGenProvider(ImageGenProvider):
             prompt=prompt,
             aspect_ratio=aspect,
             provider="openai-codex",
-            extra={"size": size, "quality": meta["quality"]},
+            modality="image" if input_images else "text",
+            extra={
+                "size": size,
+                "quality": meta["quality"],
+                "input_image_count": len(input_images),
+                "image_source": image_source,
+                "requested_size": size,
+                "pixel_size": pixel_size,
+            },
         )
 
 

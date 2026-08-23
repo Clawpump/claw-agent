@@ -224,6 +224,7 @@ export function AgentMailView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
   // Keep the ref in sync BEFORE the load effect below runs, so a load started
   // for the newly-selected agent sees a matching ref and stale in-flight loads
   // for a previous agent are dropped when they resolve.
+  // eslint-disable-next-line no-restricted-syntax -- request identity guard, not a nanostores atom mirror
   useEffect(() => {
     currentAgentRef.current = agentId
   }, [agentId])

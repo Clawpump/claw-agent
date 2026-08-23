@@ -28,6 +28,7 @@ import concurrent.futures
 import json
 import logging
 import socket
+import threading
 from typing import Any
 
 from tui_gateway import server
@@ -39,6 +40,24 @@ _log = logging.getLogger(__name__)
 # threads from a wedged socket.
 _WS_WRITE_TIMEOUT_S = 10.0
 _WS_LOG_PAYLOAD_PREVIEW = 240
+
+# Per-token streaming frames are coalesced: buffered and flushed as a batch on
+# a short timer instead of waking the event loop once per token. A model reply
+# emits hundreds of these in a burst, and each one is a loop wakeup competing
+# with the agent turn for the GIL — coalescing cuts that churn (CF-2). The task
+# that introduced this called them "agent.token"/"agent.thinking"; in this
+# codebase the per-token frames are the ``*.delta`` stream events below. Keep
+# this set to genuinely high-frequency, display-only events — anything a client
+# must see promptly (tool/approval/status/completion frames) is non-streaming
+# and flushes the buffer ahead of itself, so ordering is preserved.
+_STREAMING_EVENT_TYPES = frozenset({
+    "message.delta",
+    "reasoning.delta",
+    "thinking.delta",
+})
+# Max time a streamed token waits in the buffer before flush (~30 fps). Short
+# enough to stay imperceptible to the live token cadence.
+_TOKEN_COALESCE_S = 0.033
 
 # Keep starlette optional at import time; handle_ws uses the real class when
 # it's available and falls back to a generic Exception sentinel otherwise.
@@ -70,11 +89,40 @@ class WSTransport:
         loop: asyncio.AbstractEventLoop,
         *,
         peer: str = "unknown",
+        auth_identity: dict | None = None,
     ) -> None:
         self._ws = ws
         self._loop = loop
         self._peer = peer
+        #: Server-verified identity carried from the WS-upgrade credential
+        #: (dashboard ticket / internal credential) — stamped by
+        #: ``hermes_cli.web_server._ws_auth_reason`` onto the WS object and
+        #: passed through ``handle_ws``. None for transports that
+        #: authenticated via the legacy token path or stdio. RPC params can
+        #: never populate this: it is the only identity authority for
+        #: browser-controller registration.
+        self.auth_identity = auth_identity
         self._closed = False
+        # Token-coalescing buffer (CF-2). Streamed token frames land here and a
+        # short timer flushes the batch. The lock guards the buffer + the
+        # "armed" flag against the worker threads that call write(); the timer
+        # handle is only ever touched on the loop thread.
+        self._token_lock = threading.Lock()
+        self._pending_tokens: list[str] = []
+        self._token_flush_handle: asyncio.TimerHandle | None = None
+        self._token_flush_armed = False
+        # Buffer mutation is protected by the thread lock above; actual socket
+        # writes need an async boundary because several batches can be queued on
+        # the owning loop while it recovers from a stall.
+        self._send_lock = asyncio.Lock()
+
+    @staticmethod
+    def _is_streaming_frame(obj: dict) -> bool:
+        """True for high-frequency per-token frames eligible for coalescing."""
+        params = obj.get("params") if isinstance(obj, dict) else None
+        if not isinstance(params, dict):
+            return False
+        return params.get("type") in _STREAMING_EVENT_TYPES
 
     def write(self, obj: dict) -> bool:
         if self._closed:
@@ -87,17 +135,43 @@ class WSTransport:
         except RuntimeError:
             on_loop = False
 
-        if on_loop:
-            # Fire-and-forget — don't block the loop waiting on itself.
-            self._loop.create_task(self._safe_send(line))
-            return True
+        # Coalesce streamed token frames: buffer this frame and arm a short
+        # flush timer instead of waking the loop right now. Cheap and
+        # non-blocking — the worker returns immediately. Ordering is preserved
+        # because every non-streaming frame (below) drains the buffer ahead of
+        # itself.
+        if self._is_streaming_frame(obj):
+            with self._token_lock:
+                self._pending_tokens.append(line)
+                if not self._token_flush_armed:
+                    self._token_flush_armed = True
+                    # call_soon_threadsafe arms the call_later timer on the loop
+                    # thread and is safe to call from a worker or the loop.
+                    self._loop.call_soon_threadsafe(self._arm_token_flush)
+            return not self._closed
 
-        try:
-            from agent.async_utils import safe_schedule_threadsafe
-            fut = safe_schedule_threadsafe(self._safe_send(line), self._loop)
+        # Non-streaming frame (RPC response, control frame, non-token event):
+        # append it behind any buffered tokens and flush the whole batch NOW so
+        # it can never overtake the tokens that preceded it. The send is
+        # scheduled INSIDE the lock so the on-the-wire order matches the buffer
+        # order even if the coalesce timer fires on the loop at the same moment.
+        from agent.async_utils import safe_schedule_threadsafe
+        with self._token_lock:
+            self._pending_tokens.append(line)
+            batch = self._pending_tokens
+            self._pending_tokens = []
+            if on_loop:
+                # Fire-and-forget — don't block the loop waiting on itself.
+                self._loop.create_task(self._safe_send_many(batch))
+                return True
+            fut = safe_schedule_threadsafe(
+                self._safe_send_many(batch), self._loop
+            )
             if fut is None:
                 self._closed = True
                 return False
+
+        try:
             fut.result(timeout=_WS_WRITE_TIMEOUT_S)
             return not self._closed
         except concurrent.futures.TimeoutError:  # builtin TimeoutError on 3.11+
@@ -106,8 +180,8 @@ class WSTransport:
             # already scheduled and will flush once the loop breathes — latching
             # _closed here permanently silenced live windows after one slow
             # write (the "subagent window shows zero streaming" bug). Unblock
-            # the worker thread and keep the transport alive; _safe_send latches
-            # on a real socket error when the frame actually fails.
+            # the worker thread and keep the transport alive; _safe_send_many
+            # latches on a real socket error when the frame actually fails.
             _log.warning(
                 "ws write slow (loop stalled >%ss) peer=%s — frame left in flight",
                 _WS_WRITE_TIMEOUT_S, self._peer,
@@ -121,25 +195,73 @@ class WSTransport:
             )
             return False
 
+    def _arm_token_flush(self) -> None:
+        """Arm the coalesce timer. Runs on the loop thread (call_soon_threadsafe)."""
+        if self._closed:
+            return
+        self._token_flush_handle = self._loop.call_later(
+            _TOKEN_COALESCE_S, self._flush_tokens
+        )
+
+    def _flush_tokens(self) -> None:
+        """Send buffered tokens as one batch. Runs on the loop thread (timer).
+
+        The send is scheduled under the lock so its wire order is fixed relative
+        to a concurrent non-streaming flush in :meth:`write`.
+        """
+        with self._token_lock:
+            self._token_flush_handle = None
+            self._token_flush_armed = False
+            if not self._pending_tokens or self._closed:
+                self._pending_tokens = []
+                return
+            batch = self._pending_tokens
+            self._pending_tokens = []
+            self._loop.create_task(self._safe_send_many(batch))
+
     async def write_async(self, obj: dict) -> bool:
         """Send from the owning event loop. Awaits until the frame is on the wire."""
         if self._closed:
             return False
-        await self._safe_send(json.dumps(obj, ensure_ascii=False))
+        # Flush any buffered streamed tokens ahead of this frame (RPC response /
+        # control frame) as ONE serialized batch. Sending them in two lock
+        # acquisitions would let a later batch slip between the pending tokens
+        # and the frame that drained them.
+        with self._token_lock:
+            batch = self._pending_tokens
+            self._pending_tokens = []
+            batch.append(json.dumps(obj, ensure_ascii=False))
+        await self._safe_send_many(batch)
         return not self._closed
 
-    async def _safe_send(self, line: str) -> None:
-        try:
-            await self._ws.send_text(line)
-        except Exception as exc:
-            self._closed = True
-            _log.warning(
-                "ws send failed peer=%s error_type=%s error=%s",
-                self._peer, type(exc).__name__, exc,
-            )
+    async def _safe_send_many(self, lines: list[str]) -> None:
+        """Send one indivisible batch of pre-serialized frames in wire order."""
+        async with self._send_lock:
+            if self._closed:
+                return
+            try:
+                for line in lines:
+                    if self._closed:
+                        return
+                    await self._ws.send_text(line)
+            except Exception as exc:
+                # Latch while still holding the writer lock so queued batches
+                # observe the failure before they get a chance to touch the
+                # socket.
+                self._closed = True
+                _log.warning(
+                    "ws send failed peer=%s error_type=%s error=%s",
+                    self._peer, type(exc).__name__, exc,
+                )
 
     def close(self) -> None:
         self._closed = True
+        # Cancel any pending coalesce flush. close() runs on the loop thread
+        # (the handle_ws finally), so touching the TimerHandle here is safe.
+        handle = self._token_flush_handle
+        if handle is not None:
+            handle.cancel()
+            self._token_flush_handle = None
 
 
 def _ws_peer_label(ws: Any) -> str:
@@ -170,8 +292,21 @@ def _disable_nagle(ws: Any) -> None:
         _log.debug("ws TCP_NODELAY skip: %s", exc)
 
 
-async def handle_ws(ws: Any) -> None:
-    """Run one WebSocket session. Wire-compatible with ``tui_gateway.entry``."""
+async def handle_ws(
+    ws: Any,
+    *,
+    auth_identity: dict | None = None,
+    subprotocol: str | None = None,
+) -> None:
+    """Run one WebSocket session. Wire-compatible with ``tui_gateway.entry``.
+
+    *auth_identity* is the server-minted ``{user_id, provider}`` recorded at
+    WS-upgrade authentication (``hermes_cli.web_server._ws_auth_reason``); it
+    is stored on the transport as ``WSTransport.auth_identity`` and is the
+    only identity authority for browser-controller registration. Existing
+    callers (stdio-free harnesses, the embedded TUI child) omit it and get a
+    ``None`` transport identity — unchanged behaviour.
+    """
     peer = _ws_peer_label(ws)
     transport: WSTransport | None = None
     messages = 0
@@ -181,25 +316,50 @@ async def handle_ws(ws: Any) -> None:
     disconnect_reason = "not_connected"
 
     try:
-        await ws.accept()
+        if subprotocol:
+            await ws.accept(subprotocol=subprotocol)
+        else:
+            await ws.accept()
         disconnect_reason = "connected"
         # Push small streamed frames out immediately instead of letting Nagle
         # batch them — keeps the live token cadence intact for GUI clients.
         _disable_nagle(ws)
         _log.info("ws accepted peer=%s", peer)
 
-        transport = WSTransport(ws, asyncio.get_running_loop(), peer=peer)
+        transport = WSTransport(
+            ws,
+            asyncio.get_running_loop(),
+            peer=peer,
+            auth_identity=auth_identity,
+        )
 
+        # resolve_skin() reads config + initializes the skin engine —
+        # synchronous I/O + CPU work that should not block the event loop
+        # during the cold-start window. Run it in the thread pool so the
+        # WS read loop stays free to drain the frontend's initial RPC
+        # burst (setup.status, session.list, ...) without a stall
+        # (#60800). The skin payload is small (a dict of strings/arrays),
+        # so the to_thread overhead is negligible.
+        skin_payload = await asyncio.to_thread(server.resolve_skin)
         ready_ok = await transport.write_async(
             {
                 "jsonrpc": "2.0",
                 "method": "event",
                 "params": {
                     "type": "gateway.ready",
-                    "payload": {"skin": server.resolve_skin()},
+                    # change_events: this backend broadcasts pet.changed /
+                    # cron.changed / sessions.changed, so clients can demote
+                    # their legacy polls to slow backstops.
+                    "payload": {"skin": skin_payload, "change_events": True},
                 },
             }
         )
+        if ready_ok:
+            # Live-apply skins Hermes activates mid-conversation.
+            server._ensure_skin_watcher()
+            # Track this peer for session-less global broadcasts (skin.changed
+            # from the background watcher) — write_json can't route those.
+            server.register_live_transport(transport)
         if not ready_ok:
             disconnect_reason = "ready_send_failed"
             send_failures += 1
@@ -300,7 +460,35 @@ async def handle_ws(ws: Any) -> None:
         reaped_sessions = 0
         detached_sessions = 0
         if transport is not None:
+            server.unregister_live_transport(transport)
+
+            # Owner-safely park browser controllers this transport registered.
+            # A reconnect with the same stable identity may deliver a terminal
+            # result for work already in flight; no new dispatch is admitted
+            # while the controller is offline.
+            #
+            # Offloaded via to_thread: disconnect acquires the controller's
+            # send_lock, which a worker-thread dispatch may hold while blocking
+            # on THIS loop to transmit its frame (run_coroutine_threadsafe +
+            # result(timeout=10)). Acquiring it synchronously here would park
+            # the whole event loop behind that 10s send bridge.
+            try:
+                from gateway.browser_control_broker import (
+                    get_browser_control_broker,
+                )
+
+                await asyncio.to_thread(
+                    get_browser_control_broker().disconnect_owner, transport
+                )
+            except Exception:
+                _log.exception("ws browser-controller disconnect failed peer=%s", peer)
+
             transport.close()
+
+            try:
+                await asyncio.to_thread(server._release_wake_for_transport, transport)
+            except Exception:
+                _log.exception("ws wake-word teardown failed peer=%s", peer)
 
             # Reap sessions this transport owned (close_on_disconnect sidecar
             # sessions) or detach the rest to the drop sentinel so later emits

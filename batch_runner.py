@@ -282,7 +282,7 @@ def _process_single_prompt(
                         print(f"   Prompt {prompt_index}: Pulling docker image {container_image}...", flush=True)
                     pull = _sp.run(
                         ["docker", "pull", container_image],
-                        capture_output=True, text=True, timeout=600,
+                        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=600,
                     )
                     if pull.returncode != 0:
                         return {
@@ -485,6 +485,8 @@ def _process_batch_worker(args: Tuple) -> Dict[str, Any]:
             # Append to batch output file
             with open(batch_output_file, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(trajectory_entry, ensure_ascii=False) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
         
         # Aggregate tool statistics
         for tool_name, stats in result.get("tool_stats", {}).items():
@@ -978,8 +980,15 @@ class BatchRunner:
                         except Exception as ckpt_err:
                             # Don't fail the run if checkpoint write fails
                             print(f"⚠️  Warning: Failed to save incremental checkpoint: {ckpt_err}")
+                except KeyboardInterrupt:
+                    print("\n⚠️  Interrupted — terminating batch workers...")
+                    pool.terminate()
+                    pool.join()
+                    raise
                 except Exception as e:
                     logger.error("Batch worker failed: %s", e, exc_info=True)
+                    pool.terminate()
+                    pool.join()
                     raise
                 finally:
                     root_logger.setLevel(original_level)
@@ -1010,7 +1019,7 @@ class BatchRunner:
             checkpoint_data["completed_prompts"] = sorted(completed_prompts_set)
             self._save_checkpoint(checkpoint_data, lock=checkpoint_lock)
         except Exception as ckpt_err:
-            print(f"âš ï¸  Warning: Failed to save final checkpoint: {ckpt_err}")
+            print(f"⚠️  Warning: Failed to save final checkpoint: {ckpt_err}")
         
         # Calculate success rates
         for tool_name in total_tool_stats:
@@ -1192,7 +1201,7 @@ def main(
         providers_order (str): Comma-separated list of OpenRouter providers to try in order (e.g. "anthropic,openai,google")
         provider_sort (str): Sort providers by "price", "throughput", or "latency" (OpenRouter only)
         max_tokens (int): Maximum tokens for model responses (optional, uses model default if not set)
-        reasoning_effort (str): OpenRouter reasoning effort level: "none", "minimal", "low", "medium", "high", "xhigh" (default: "medium")
+        reasoning_effort (str): Reasoning effort: "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra" (default: "medium")
         reasoning_disabled (bool): Completely disable reasoning/thinking tokens (default: False)
         prefill_messages_file (str): Path to JSON file containing prefill messages (list of {role, content} dicts)
         max_samples (int): Only process the first N samples from the dataset (optional, processes all if not set)
@@ -1237,21 +1246,21 @@ def main(
     # Validate required arguments
     if not dataset_file:
         print("❌ Error: --dataset_file is required")
-        return
-    
+        raise SystemExit(1)
+
     if not batch_size or batch_size < 1:
         print("❌ Error: --batch_size must be a positive integer")
-        return
-    
+        raise SystemExit(1)
+
     if not run_name:
         print("❌ Error: --run_name is required")
-        return
-    
+        raise SystemExit(1)
+
     # Parse provider preferences (comma-separated strings to lists)
     providers_allowed_list = [p.strip() for p in providers_allowed.split(",")] if providers_allowed else None
     providers_ignored_list = [p.strip() for p in providers_ignored.split(",")] if providers_ignored else None
     providers_order_list = [p.strip() for p in providers_order.split(",")] if providers_order else None
-    
+
     # Build reasoning_config from CLI flags
     # --reasoning_disabled takes priority, then --reasoning_effort, then default (medium)
     reasoning_config = None
@@ -1261,13 +1270,13 @@ def main(
         print("🧠 Reasoning: DISABLED (effort=none)")
     elif reasoning_effort:
         # Use specified effort level
-        valid_efforts = ["none", "minimal", "low", "medium", "high", "xhigh"]
+        valid_efforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
         if reasoning_effort not in valid_efforts:
             print(f"❌ Error: --reasoning_effort must be one of: {', '.join(valid_efforts)}")
-            return
+            raise SystemExit(1)
         reasoning_config = {"enabled": True, "effort": reasoning_effort}
         print(f"🧠 Reasoning effort: {reasoning_effort}")
-    
+
     # Load prefill messages from JSON file if provided
     prefill_messages = None
     if prefill_messages_file:
@@ -1276,12 +1285,12 @@ def main(
                 prefill_messages = json.load(f)
             if not isinstance(prefill_messages, list):
                 print("❌ Error: prefill_messages_file must contain a JSON array of messages")
-                return
+                raise SystemExit(1)
             print(f"💬 Loaded {len(prefill_messages)} prefill messages from {prefill_messages_file}")
         except Exception as e:
             print(f"❌ Error loading prefill messages: {e}")
-            return
-    
+            raise SystemExit(1)
+
     # Initialize and run batch runner
     try:
         runner = BatchRunner(
@@ -1308,12 +1317,12 @@ def main(
         )
 
         runner.run(resume=resume)
-    
+
     except Exception as e:
         print(f"\n❌ Fatal error: {e}")
         if verbose:
             traceback.print_exc()
-        return 1
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

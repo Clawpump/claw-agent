@@ -21,8 +21,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from agent.file_safety import get_read_block_error, is_write_denied
+from openai.types.chat.chat_completion_message_tool_call import (
+    ChatCompletionMessageToolCall,
+    Function,
+)
+
+from agent.file_safety import get_read_block_error, get_write_denied_error, is_write_approval_required
 from agent.redact import redact_sensitive_text
+from tools.environments.local import hermes_subprocess_env
 
 ACP_MARKER_BASE_URL = "acp://copilot"
 _DEFAULT_TIMEOUT_SECONDS = 900.0
@@ -68,6 +74,60 @@ def _resolve_args() -> list[str]:
     return shlex.split(raw)
 
 
+# Probe verdicts cached per binary path so repeated prompts against a
+# CLI that supports --acp pay the ~50ms --help cost exactly once per
+# process. Only definitive verdicts (True/False) are cached; an
+# inconclusive probe (binary missing, --help crashed or timed out) is
+# not cached so a CLI installed mid-session is picked up.
+_ACP_PROBE_CACHE: dict[str, bool] = {}
+
+
+def _acp_supported(command: str, args: list[str]) -> bool | None:
+    """Tri-state probe: does ``command`` accept the ACP args we'd pass?
+
+    Different CLI versions support different transports. The GitHub
+    Copilot CLI (`@github/copilot`, late 2025+) ships with ``--acp``;
+    older releases (and Claude Code v2.x as of Aug 2026) do not.
+    Spawning a CLI that doesn't recognize the flag silently exits
+    with code 1 and ``error: unknown option '--acp'`` on stderr,
+    after which every delegate_task call hangs the parent for
+    ``child_timeout_seconds`` (default 600s) waiting for stdout
+    that never arrives.
+
+    Returns:
+      - ``True``  — help text advertises ``--acp``; safe to spawn.
+      - ``False`` — help ran cleanly but ``--acp`` is absent; spawning
+        would hang, so the caller should fast-fail with a clear error.
+      - ``None``  — inconclusive (binary missing, --help failed or
+        timed out). The caller must fall through to the normal spawn
+        path, which surfaces the existing "Could not start Copilot ACP
+        command" error with full context.
+
+    Only probes when ``--acp`` is actually among ``args``: a custom
+    HERMES_COPILOT_ACP_ARGS transport is the operator's business.
+    """
+    if "--acp" not in args:
+        return True
+    cached = _ACP_PROBE_CACHE.get(command)
+    if cached is not None:
+        return cached
+    try:
+        probe = subprocess.run(
+            [command, "--help"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    if probe.returncode != 0:
+        # --help itself failed; can't tell anything about --acp.
+        return None
+    # Match ``--acp`` as a flag in the help text; tolerate spacing and
+    # variants like ``[--acp]``.
+    verdict = bool(re.search(r"(?:^|[\s\[])--acp(?:[\s=\],]|$)", probe.stdout, re.MULTILINE))
+    _ACP_PROBE_CACHE[command] = verdict
+    return verdict
+
+
 def _resolve_home_dir() -> str:
     """Return a stable HOME for child ACP processes."""
     home = os.environ.get("HOME", "").strip()
@@ -94,7 +154,10 @@ def _resolve_home_dir() -> str:
 
 
 def _build_subprocess_env() -> dict[str, str]:
-    env = os.environ.copy()
+    # Copilot ACP is a model-driving CLI executor: it legitimately needs LLM
+    # provider credentials. Route through the central helper so Tier-1 secrets
+    # (gateway bot tokens, GitHub auth, infra) are still stripped (#29157).
+    env = hermes_subprocess_env(inherit_credentials=True)
     home = _resolve_home_dir()
     env["HOME"] = home
     from hermes_constants import apply_subprocess_home_env
@@ -224,11 +287,73 @@ def _render_message_content(content: Any) -> str:
     return str(content).strip()
 
 
-def _extract_tool_calls_from_text(text: str) -> tuple[list[SimpleNamespace], str]:
+def _build_openai_tool_call(
+    *,
+    call_id: str,
+    name: str,
+    arguments: str,
+) -> ChatCompletionMessageToolCall:
+    """Build an OpenAI-compatible tool-call object for downstream handling."""
+    return ChatCompletionMessageToolCall(
+        id=call_id,
+        call_id=call_id,
+        response_item_id=None,
+        type="function",
+        function=Function(name=name, arguments=arguments),
+    )
+
+
+def _completion_to_stream_chunks(completion: SimpleNamespace) -> list[SimpleNamespace]:
+    """Convert a one-shot ACP response into OpenAI-style stream chunks."""
+    choice = completion.choices[0]
+    message = choice.message
+    tool_call_deltas = None
+    if message.tool_calls:
+        tool_call_deltas = []
+        for index, tool_call in enumerate(message.tool_calls):
+            tool_call_deltas.append(
+                SimpleNamespace(
+                    index=index,
+                    id=getattr(tool_call, "id", None),
+                    type=getattr(tool_call, "type", "function"),
+                    function=SimpleNamespace(
+                        name=getattr(tool_call.function, "name", None),
+                        arguments=getattr(tool_call.function, "arguments", None),
+                    ),
+                )
+            )
+
+    delta = SimpleNamespace(
+        role="assistant",
+        content=message.content or None,
+        tool_calls=tool_call_deltas,
+        reasoning_content=message.reasoning_content,
+        reasoning=message.reasoning,
+    )
+    data_chunk = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                index=0,
+                delta=delta,
+                finish_reason=choice.finish_reason,
+            )
+        ],
+        model=completion.model,
+        usage=None,
+    )
+    usage_chunk = SimpleNamespace(
+        choices=[],
+        model=completion.model,
+        usage=completion.usage,
+    )
+    return [data_chunk, usage_chunk]
+
+
+def _extract_tool_calls_from_text(text: str) -> tuple[list[ChatCompletionMessageToolCall], str]:
     if not isinstance(text, str) or not text.strip():
         return [], ""
 
-    extracted: list[SimpleNamespace] = []
+    extracted: list[ChatCompletionMessageToolCall] = []
     consumed_spans: list[tuple[int, int]] = []
 
     def _try_add_tool_call(raw_json: str) -> None:
@@ -252,12 +377,10 @@ def _extract_tool_calls_from_text(text: str) -> tuple[list[SimpleNamespace], str
             call_id = f"acp_call_{len(extracted)+1}"
 
         extracted.append(
-            SimpleNamespace(
-                id=call_id,
+            _build_openai_tool_call(
                 call_id=call_id,
-                response_item_id=None,
-                type="function",
-                function=SimpleNamespace(name=fn_name.strip(), arguments=fn_args),
+                name=fn_name.strip(),
+                arguments=fn_args,
             )
         )
 
@@ -376,6 +499,7 @@ class CopilotACPClient:
         timeout: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: Any = None,
+        stream: bool = False,
         **_: Any,
     ) -> Any:
         prompt_text = _format_messages_as_prompt(
@@ -422,23 +546,53 @@ class CopilotACPClient:
         )
         finish_reason = "tool_calls" if tool_calls else "stop"
         choice = SimpleNamespace(message=assistant_message, finish_reason=finish_reason)
-        return SimpleNamespace(
+        completion = SimpleNamespace(
             choices=[choice],
             usage=usage,
             model=model or "copilot-acp",
         )
+        if stream:
+            return _completion_to_stream_chunks(completion)
+        return completion
 
     def _run_prompt(self, prompt_text: str, *, timeout_seconds: float) -> tuple[str, str]:
+        # Fast-fail when the CLI doesn't support the ACP args we'd pass.
+        # Without this guard, a CLI like Claude Code v2.x exits with
+        # ``error: unknown option '--acp'`` immediately, then the parent
+        # ACP loop waits the full ``child_timeout_seconds`` (default 600s)
+        # for stdout that never arrives. The probe costs ~50ms and turns
+        # a 600s silent hang into a 280ms clear error.
+        # ``None`` (inconclusive probe — e.g. binary missing) falls
+        # through to the spawn below, which raises the established
+        # "Could not start Copilot ACP command" error.
+        if _acp_supported(self._acp_command, self._acp_args) is False:
+            preview = " ".join(self._acp_args[:3]) if self._acp_args else "(none)"
+            raise RuntimeError(
+                f"ACP transport not supported by '{self._acp_command}': "
+                f"`{preview}` is rejected as an unknown option. "
+                f"This usually means the CLI is an older release (e.g. "
+                f"Claude Code v2.x) or a different tool than expected. "
+                f"Either install a CLI that ships with --acp support "
+                f"(e.g. `@github/copilot` late 2025+), or set "
+                f"HERMES_COPILOT_ACP_COMMAND / HERMES_COPILOT_ACP_ARGS "
+                f"to a working pair."
+            )
+
         try:
+            # Hide the console the CLI child would otherwise flash on Windows
+            # (#56747). Hide-only — stdio pipes stay intact for the ACP wire.
+            from hermes_cli._subprocess_compat import windows_hide_flags
+
             proc = subprocess.Popen(
                 [self._acp_command] + self._acp_args,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
+                text=True, encoding='utf-8', errors='replace',
                 bufsize=1,
                 cwd=self._acp_cwd,
                 env=_build_subprocess_env(),
+                creationflags=windows_hide_flags(),
             )
         except FileNotFoundError as exc:
             raise RuntimeError(
@@ -630,7 +784,7 @@ class CopilotACPClient:
                 if block_error:
                     raise PermissionError(block_error)
                 try:
-                    content = path.read_text()
+                    content = path.read_text(encoding="utf-8")
                 except FileNotFoundError:
                     content = ""
                 line = params.get("line")
@@ -654,12 +808,19 @@ class CopilotACPClient:
         elif method == "fs/write_text_file":
             try:
                 path = _ensure_path_within_cwd(str(params.get("path") or ""), cwd)
-                if is_write_denied(str(path)):
+                denied = get_write_denied_error(str(path))
+                if denied:
+                    raise PermissionError(denied)
+                # Approval-gated paths (e.g. ~/.ssh/config) are not hard-denied
+                # for interactive tools, but the ACP shim has no human channel
+                # to confirm the write — fail closed here.
+                if is_write_approval_required(str(path)):
                     raise PermissionError(
-                        f"Write denied: '{path}' is a protected system/credential file."
+                        f"Write denied: '{path}' requires interactive approval "
+                        "and cannot be written through the ACP file bridge."
                     )
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(str(params.get("content") or ""))
+                path.write_text(str(params.get("content") or ""), encoding="utf-8")
                 response = {
                     "jsonrpc": "2.0",
                     "id": message_id,

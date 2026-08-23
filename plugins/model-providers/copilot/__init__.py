@@ -35,9 +35,31 @@ class CopilotProfile(ProviderProfile):
                 supported_efforts = github_model_reasoning_efforts(model)
                 if supported_efforts and reasoning_config:
                     effort = reasoning_config.get("effort", "medium")
-                    # Normalize non-standard effort levels to the nearest supported
-                    if effort == "xhigh":
-                        effort = "high"
+                    # Honor the requested level when the live Copilot catalog
+                    # lists it as supported: gpt-5.5/gpt-5.4 DO support
+                    # ``xhigh``. Otherwise clamp to the nearest WEAKER
+                    # supported level via the shared ladder helper — the old
+                    # ad-hoc rules dropped everything unrecognized to
+                    # ``medium``, which inverted the ladder: ``ultra`` (the
+                    # strongest ask) resolved weaker than an explicit
+                    # ``high`` (#74295).
+                    if effort not in supported_efforts:
+                        from hermes_cli.models import (
+                            clamp_reasoning_effort_to_supported,
+                        )
+
+                        effort = clamp_reasoning_effort_to_supported(
+                            effort, list(supported_efforts)
+                        )
+                        if effort not in supported_efforts:
+                            # Unrecognized/bespoke level the ladder can't
+                            # place — fall back to medium, then to the
+                            # catalog's first entry.
+                            effort = (
+                                "medium"
+                                if "medium" in supported_efforts
+                                else supported_efforts[0]
+                            )
                     if effort in supported_efforts:
                         extra_body["reasoning"] = {"effort": effort}
                 elif supported_efforts:

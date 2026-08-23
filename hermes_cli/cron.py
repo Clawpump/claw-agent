@@ -6,7 +6,6 @@ pause/resume/run/remove, status, and tick.
 """
 
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Iterable, List, Optional
@@ -16,23 +15,15 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from hermes_cli.colors import Colors, color
 
-# Patterns that indicate a cron job targets the gateway lifecycle.
-# Matches commands that restart/stop the gateway or its service manager.
-# Deliberately specific — a bare "gateway ... restart" catch-all would block
-# legitimate prompts that merely mention an unrelated gateway (e.g. "summarize
-# the API gateway logs and report restart events").
-_GATEWAY_LIFECYCLE_PATTERNS = re.compile(
-    r"(?i)"
-    r"(hermes\s+gateway\s+(restart|stop|start))"
-    r"|(launchctl\s+(kickstart|unload|load|stop|restart)\s+.*hermes)"
-    r"|(systemctl\s+(-\S+\s+)*(restart|stop|start)\s+.*hermes)"
-    r"|(p?kill\s+.*hermes.*gateway)"
+# Gateway-lifecycle command detection lives in ``cron.lifecycle_guard`` so it
+# can be shared across every job-creation path (CLI + the agent's ``cronjob``
+# model tool via ``cron.jobs.create_job``) without a circular import. Re-export
+# ``_contains_gateway_lifecycle_command`` here for back-compat: ``tools/
+# terminal_tool.py`` imports it from this module to hard-block the same
+# commands at execution time when ``_HERMES_GATEWAY=1``.
+from cron.lifecycle_guard import (  # noqa: F401  (re-exported for terminal_tool)
+    contains_gateway_lifecycle_command as _contains_gateway_lifecycle_command,
 )
-
-
-def _contains_gateway_lifecycle_command(text: str) -> bool:
-    """Return True if *text* contains a gateway lifecycle command pattern."""
-    return bool(_GATEWAY_LIFECYCLE_PATTERNS.search(text))
 
 
 def _normalize_skills(single_skill=None, skills: Optional[Iterable[str]] = None) -> Optional[List[str]]:
@@ -57,6 +48,54 @@ def _cron_api(**kwargs):
     return json.loads(cronjob_tool(**kwargs))
 
 
+def _active_cron_provider_name() -> str:
+    """Name of the resolved cron scheduler provider ('builtin', 'chronos', …).
+
+    Best-effort + offline (``resolve_cron_scheduler`` reads config and the
+    provider's ``is_available()`` contract forbids network). Returns 'builtin'
+    on any failure so callers fall back to the historical ticker-based checks.
+    """
+    try:
+        from cron.scheduler_provider import resolve_cron_scheduler
+
+        return resolve_cron_scheduler().name or "builtin"
+    except Exception:
+        return "builtin"
+
+
+def _warn_if_gateway_not_running() -> None:
+    """Warn that scheduled jobs won't fire unless the gateway is running.
+
+    The cron ticker only runs inside the gateway (``_start_cron_ticker`` in
+    gateway/run.py); there is no standalone cron daemon. Without a running
+    gateway, ``next_run_at`` passes but jobs never fire and ``last_run_at``
+    stays null — the most common cron support report (#51038). Surfacing this
+    at create/list time, when the user is right there, prevents it.
+
+    An external provider (e.g. Chronos) fires jobs via a NAS-mediated webhook,
+    NOT the in-process ticker, so a momentarily-absent gateway process does not
+    mean jobs won't fire — the warning would be a false alarm. Stay quiet for
+    any non-builtin provider; the gateway-process heuristic only speaks to the
+    built-in ticker's trigger.
+    """
+    try:
+        if _active_cron_provider_name() != "builtin":
+            return
+
+        from hermes_cli.gateway import find_gateway_pids
+
+        if find_gateway_pids():
+            return
+    except Exception:
+        # If we can't determine gateway state, stay quiet rather than nag.
+        return
+
+    print(color("  ⚠  Gateway is not running — jobs won't fire automatically.", Colors.YELLOW))
+    print(color("     Start it with: hermes gateway install", Colors.DIM))
+    print(color("                    sudo hermes gateway install --system  # Linux servers", Colors.DIM))
+    print(color("     Check status:  hermes cron status", Colors.DIM))
+
+
 def cron_list(show_all: bool = False):
     """List all scheduled jobs."""
     from cron.jobs import list_jobs
@@ -74,11 +113,15 @@ def cron_list(show_all: bool = False):
     print(color("└─────────────────────────────────────────────────────────────────────────┘", Colors.CYAN))
     print()
 
+    from cron.jobs import effective_job_state
+
     for job in jobs:
         job_id = job.get("id", "?")
         name = job.get("name", "(unnamed)")
         schedule = job.get("schedule_display", job.get("schedule", {}).get("value", "?"))
-        state = job.get("state", "scheduled" if job.get("enabled", True) else "paused")
+        # Derive from the scheduler-honoured flag — never show [paused] when
+        # enabled=true (half-paused contradiction must not look frozen).
+        state = effective_job_state(job)
         next_run = job.get("next_run_at", "?")
 
         # `repeat` may be present-but-null in the job record (e.g. a one-shot
@@ -89,7 +132,11 @@ def cron_list(show_all: bool = False):
         repeat_completed = repeat_info.get("completed", 0)
         repeat_str = f"{repeat_completed}/{repeat_times}" if repeat_times else "∞"
 
-        deliver = job.get("deliver", ["local"])
+        # `deliver` may be present-but-null in the job record (same pitfall as
+        # `repeat` above), so coalesce to the default rather than relying on the
+        # dict-default, which only applies to a missing key. A null value would
+        # otherwise reach `", ".join(None)` and crash the whole listing (#32896).
+        deliver = job.get("deliver") or ["local"]
         if isinstance(deliver, str):
             deliver = [deliver]
         deliver_str = ", ".join(deliver)
@@ -115,6 +162,12 @@ def cron_list(show_all: bool = False):
         script = job.get("script")
         if script:
             print(f"    Script:    {script}")
+        monitor_source = job.get("monitor_script") or job.get("monitor_url")
+        if monitor_source:
+            print(f"    Monitor:   {monitor_source} (agent runs only on output change)")
+            mon_state = job.get("monitor_state") or {}
+            if mon_state.get("last_changed_at"):
+                print(f"    Changed:   {mon_state['last_changed_at']}")
         if job.get("no_agent"):
             print(f"    Mode:      {color('no-agent', Colors.DIM)} (script stdout delivered directly)")
         workdir = job.get("workdir")
@@ -129,26 +182,66 @@ def cron_list(show_all: bool = False):
                 status_display = color("ok", Colors.GREEN)
             else:
                 status_display = color(f"{last_status}: {job.get('last_error', '?')}", Colors.RED)
+                streak = int(job.get("failure_streak") or 0)
+                if streak >= 2:
+                    status_display += color(f"  ({streak} failures in a row)", Colors.RED)
             print(f"    Last run:  {last_run}  {status_display}")
+
+        latest_execution = job.get("latest_execution")
+        if latest_execution:
+            print(
+                f"    Execution: {latest_execution.get('status', '?')}  "
+                f"{latest_execution.get('id', '?')}"
+            )
 
         delivery_err = job.get("last_delivery_error")
         if delivery_err:
             print(f"    {color('⚠ Delivery failed:', Colors.YELLOW)} {delivery_err}")
 
+        fire_err = job.get("last_fire_error")
+        if isinstance(fire_err, dict) and fire_err.get("detail"):
+            print(
+                f"    {color('⚠ Missed scheduled fire:', Colors.RED)} "
+                f"{fire_err.get('at', '?')}  {fire_err['detail']}"
+            )
+
         print()
 
-    from hermes_cli.gateway import find_gateway_pids
-    if not find_gateway_pids():
-        print(color("  ⚠  Gateway is not running — jobs won't fire automatically.", Colors.YELLOW))
-        print(color("     Start it with: hermes gateway install", Colors.DIM))
-        print(color("                    sudo hermes gateway install --system  # Linux servers", Colors.DIM))
-        print()
+    _warn_if_gateway_not_running()
 
 
 def cron_tick():
     """Run due jobs once and exit."""
     from cron.scheduler import tick
-    tick(verbose=True)
+    try:
+        tick(verbose=True)
+    except OSError as exc:
+        # tick() now propagates real lock-acquisition failures (EMFILE,
+        # EACCES on open, ...) instead of swallowing them as contention
+        # (#87644). For the one-shot CLI surface, report cleanly instead of
+        # dumping a traceback; the gateway ticker loop handles its own retry.
+        print(color(f"✗ Cron tick failed: {exc}", Colors.RED))
+        print("  Check `hermes cron status` and the gateway log for details.")
+        return 1
+    return 0
+
+
+def cron_runs(job_id: Optional[str] = None, limit: int = 20):
+    """Show indexed durable cron execution history."""
+    from cron.executions import list_executions
+
+    records = list_executions(job_id=job_id, limit=limit)
+    if not records:
+        print("No cron execution attempts recorded.")
+        return
+    for record in records:
+        print(
+            f"{record.get('id', '?')}  {record.get('status', '?'):<9}  "
+            f"job={record.get('job_id', '?')}  source={record.get('source', '?')}  "
+            f"{record.get('claimed_at', '?')}"
+        )
+        if record.get("error"):
+            print(f"    {record['error']}")
 
 
 def cron_status():
@@ -158,10 +251,100 @@ def cron_status():
 
     print()
 
+    provider = _active_cron_provider_name()
+    if provider != "builtin":
+        # An external provider (e.g. Chronos) does NOT run the in-process 60s
+        # ticker — it arms one external one-shot per job and is fired by a
+        # NAS-mediated webhook, so between fires there is intentionally NO
+        # ticker thread and NO heartbeat file. Reporting the ticker-heartbeat
+        # staleness here would always say "stalled / not firing" on a perfectly
+        # healthy Chronos instance. Report the provider instead and skip the
+        # ticker-liveness heuristics entirely.
+        print(color(
+            f"✓ Cron provider: {provider} — jobs fire via the managed scheduler, "
+            "not the in-process ticker.",
+            Colors.GREEN,
+        ))
+        print(color(
+            "  (No ticker heartbeat is expected for an external provider; "
+            "due jobs are delivered by an authenticated webhook.)",
+            Colors.DIM,
+        ))
+        print()
+        _print_active_jobs_summary(list_jobs(include_disabled=False))
+        print()
+        return
+
     pids = find_gateway_pids()
     if pids:
-        print(color("✓ Gateway is running — cron jobs will fire automatically", Colors.GREEN))
-        print(f"  PID: {', '.join(map(str, pids))}")
+        # The gateway PROCESS is alive — but the cron ticker THREAD inside it
+        # can die silently, or stay alive while every tick fails. Check both
+        # the liveness heartbeat and the last-successful-tick marker so we
+        # don't report "will fire" when the ticker is dead or failing
+        # (#32612, #32895).
+        from cron.jobs import (
+            get_ticker_heartbeat_age,
+            get_ticker_last_error,
+            get_ticker_success_age,
+            TICKER_INTERVAL_SECONDS,
+        )
+        from cron.scheduler import _is_fd_exhaustion_text as _cron_is_fd_exhaustion_text
+
+        # Allow ~3 missed ticker iterations (+ a little slack) before declaring
+        # trouble. Derived from the shared interval constant so this threshold
+        # tracks the ticker cadence instead of assuming a hardcoded 60s.
+        STALE_AFTER = TICKER_INTERVAL_SECONDS * 3 + 20  # = 200s at the 60s default
+        hb_age = get_ticker_heartbeat_age()
+        ok_age = get_ticker_success_age()
+
+        if hb_age is not None and hb_age > STALE_AFTER:
+            # No heartbeat at all → the ticker thread is gone.
+            print(color(
+                "⚠ Gateway is running but the cron ticker looks STALLED — "
+                f"no heartbeat for {int(hb_age)}s (expected every ~60s).",
+                Colors.YELLOW,
+            ))
+            print(f"  PID: {', '.join(map(str, pids))}")
+            print("  Cron jobs may NOT be firing. Restart: hermes gateway restart")
+        elif hb_age is not None and ok_age is not None and ok_age > STALE_AFTER:
+            # Loop is alive (fresh heartbeat) but no tick has SUCCEEDED in a
+            # long time → ticks are failing every iteration.
+            print(color(
+                "⚠ Gateway and cron ticker are running, but no tick has "
+                f"succeeded in {int(ok_age)}s — ticks may be failing.",
+                Colors.YELLOW,
+            ))
+            print(f"  PID: {', '.join(map(str, pids))}")
+            last_error = get_ticker_last_error()
+            if last_error:
+                # Show WHY ticks fail — e.g. a root-rewritten jobs.json
+                # (PermissionError) that silently locked out the ticker's
+                # uid for ~14h in the field (#68483), or fd exhaustion
+                # (EMFILE) that used to stall the scheduler invisibly
+                # (#87644).
+                print(color(f"  Last tick error: {last_error}", Colors.RED))
+                if "Permission denied" in last_error:
+                    print(color(
+                        "  Hint: jobs.json may be owned by another user "
+                        "(e.g. rewritten by a root `docker exec hermes "
+                        "hermes cron ...`). Fix ownership to match the "
+                        "gateway user, and prefer `docker exec -u <uid>:<gid>`.",
+                        Colors.YELLOW,
+                    ))
+                elif _cron_is_fd_exhaustion_text(last_error):
+                    print(color(
+                        "  Hint: the ticker hit file-descriptor exhaustion "
+                        "(EMFILE). The scheduler now retries with backoff and "
+                        "attempts fd reclamation, but if the leak persists, "
+                        "restart the gateway to recover scheduling.",
+                        Colors.YELLOW,
+                    ))
+            print("  Check the gateway log for 'Cron tick error'.")
+        else:
+            print(color("✓ Gateway is running — cron jobs will fire automatically", Colors.GREEN))
+            print(f"  PID: {', '.join(map(str, pids))}")
+            if hb_age is not None:
+                print(f"  Ticker heartbeat: {int(hb_age)}s ago")
     else:
         print(color("✗ Gateway is not running — cron jobs will NOT fire", Colors.RED))
         print()
@@ -172,7 +355,14 @@ def cron_status():
 
     print()
 
-    jobs = list_jobs(include_disabled=False)
+    _print_active_jobs_summary(list_jobs(include_disabled=False))
+
+    print()
+
+
+def _print_active_jobs_summary(jobs) -> None:
+    """Print the '<N> active job(s)' + next-run line shared by every status
+    path (built-in ticker AND external provider)."""
     if jobs:
         next_runs = [j.get("next_run_at") for j in jobs if j.get("next_run_at")]
         print(f"  {len(jobs)} active job(s)")
@@ -181,32 +371,14 @@ def cron_status():
     else:
         print("  No active jobs")
 
-    print()
-
 
 def cron_create(args):
-    # Defense: reject cron jobs that contain gateway lifecycle commands.
-    # Prevents agents from scheduling their own restart/stop, which creates
-    # SIGTERM-respawn loops under launchd/systemd KeepAlive (#30719).
-    prompt = getattr(args, "prompt", None) or ""
-    script = getattr(args, "script", None)
-    combined = prompt
-    if script:
-        try:
-            script_text = Path(script).read_text(encoding="utf-8")
-            combined = f"{combined}\n{script_text}"
-        except (OSError, UnicodeDecodeError):
-            pass
-    if _contains_gateway_lifecycle_command(combined):
-        print(color(
-            "Blocked: cron job contains a gateway lifecycle command "
-            "(restart/stop/kill).\n"
-            "This is blocked to prevent restart loops (#30719).\n"
-            "Use `hermes gateway restart` from a shell outside the gateway.",
-            Colors.RED,
-        ))
-        return 1
-
+    # The gateway-lifecycle guard lives in cron.jobs.create_job so it fires on
+    # every job-creation path (this CLI subcommand AND the agent's `cronjob`
+    # model tool, which calls create_job directly). When it blocks, create_job
+    # raises GatewayLifecycleBlocked, the `cronjob` tool wrapper catches it and
+    # returns it as result["error"], and the `if not result.get("success")`
+    # branch below prints it in red and exits 1 — same UX as before.
     result = _cron_api(
         action="create",
         schedule=args.schedule,
@@ -218,7 +390,13 @@ def cron_create(args):
         skills=_normalize_skills(getattr(args, "skill", None), getattr(args, "skills", None)),
         script=getattr(args, "script", None),
         workdir=getattr(args, "workdir", None),
+        model=getattr(args, "model", None),
+        provider=getattr(args, "model_provider", None),
         no_agent=getattr(args, "no_agent", False) or None,
+        monitor_script=getattr(args, "monitor_script", None),
+        monitor_url=getattr(args, "monitor_url", None),
+        continuity=getattr(args, "continuity", None),
+        reasoning_effort=getattr(args, "reasoning_effort", None),
     )
     if not result.get("success"):
         print(color(f"Failed to create job: {result.get('error', 'unknown error')}", Colors.RED))
@@ -231,11 +409,18 @@ def cron_create(args):
     job_data = result.get("job", {})
     if job_data.get("script"):
         print(f"  Script: {job_data['script']}")
+    if job_data.get("monitor_script"):
+        print(f"  Monitor: {job_data['monitor_script']} (agent runs only on output change)")
+    if job_data.get("monitor_url"):
+        print(f"  Monitor: {job_data['monitor_url']} (agent runs only on output change)")
     if job_data.get("no_agent"):
         print("  Mode: no-agent (script stdout delivered directly)")
+    if job_data.get("continuity"):
+        print("  Continuity: on (each run sees the previous run's output)")
     if job_data.get("workdir"):
         print(f"  Workdir: {job_data['workdir']}")
     print(f"  Next run: {result['next_run_at']}")
+    _warn_if_gateway_not_running()
     return 0
 
 
@@ -280,7 +465,13 @@ def cron_edit(args):
         skills=final_skills,
         script=getattr(args, "script", None),
         workdir=getattr(args, "workdir", None),
+        model=getattr(args, "model", None),
+        provider=getattr(args, "model_provider", None),
         no_agent=getattr(args, "no_agent", None),
+        monitor_script=getattr(args, "monitor_script", None),
+        monitor_url=getattr(args, "monitor_url", None),
+        continuity=getattr(args, "continuity", None),
+        reasoning_effort=getattr(args, "reasoning_effort", None),
     )
     if not result.get("success"):
         print(color(f"Failed to update job: {result.get('error', 'unknown error')}", Colors.RED))
@@ -296,15 +487,46 @@ def cron_edit(args):
         print("  Skills: none")
     if updated.get("script"):
         print(f"  Script: {updated['script']}")
+    if updated.get("monitor_script"):
+        print(f"  Monitor: {updated['monitor_script']} (agent runs only on output change)")
+    if updated.get("monitor_url"):
+        print(f"  Monitor: {updated['monitor_url']} (agent runs only on output change)")
     if updated.get("no_agent"):
         print("  Mode: no-agent (script stdout delivered directly)")
+    if updated.get("continuity"):
+        print("  Continuity: on (each run sees the previous run's output)")
     if updated.get("workdir"):
         print(f"  Workdir: {updated['workdir']}")
     return 0
 
 
 def _job_action(action: str, job_id: str, success_verb: str) -> int:
-    result = _cron_api(action=action, job_id=job_id)
+    _stateless_reset = None
+    if action == "run":
+        # One-shot CLI: this process exits as soon as the command returns, so
+        # a background-dispatched run (daemon thread of THIS process) would be
+        # orphaned mid-LLM-call — the delegation dies 'unknown' and the job's
+        # execution row is stuck 'claimed', blocking future runs (#86721).
+        # The background path in ``_try_dispatch_background_run`` triggers when
+        # the CLI inherits a gateway/desktop session env (HERMES_SESSION_KEY);
+        # declare the channel stateless so ``async_delivery_supported()`` gates
+        # it off and the run executes synchronously to completion instead.
+        # The declaration is scoped to this call (token reset in ``finally``)
+        # so in-process callers (tests, embedding apps) are not tainted.
+        try:
+            from gateway.session_context import _SESSION_ASYNC_DELIVERY
+
+            _stateless_token = _SESSION_ASYNC_DELIVERY.set(False)
+
+            def _stateless_reset() -> None:
+                _SESSION_ASYNC_DELIVERY.reset(_stateless_token)
+        except Exception:
+            _stateless_reset = None
+    try:
+        result = _cron_api(action=action, job_id=job_id)
+    finally:
+        if _stateless_reset is not None:
+            _stateless_reset()
     if not result.get("success"):
         print(color(f"Failed to {action} job: {result.get('error', 'unknown error')}", Colors.RED))
         return 1
@@ -313,8 +535,92 @@ def _job_action(action: str, job_id: str, success_verb: str) -> int:
     if action in {"resume", "run"} and result.get("job", {}).get("next_run_at"):
         print(f"  Next run: {result['job']['next_run_at']}")
     if action == "run":
-        print("  It will run on the next scheduler tick.")
+        job = result.get("job", {})
+        # A manual run can be dispatched to the gateway daemon's background
+        # delegation worker instead of executing inline (e.g. when the CLI
+        # process inherits a gateway/desktop session env and the run
+        # resolves a session key). Such responses carry
+        # execution_mode="background" and/or a delegation_id, and the job
+        # keeps running AFTER this CLI process exits — a terminal
+        # success/failure verdict would be a lie (#83340). Report the
+        # background dispatch instead of claiming the run failed.
+        delegation_id = job.get("delegation_id")
+        if job.get("execution_mode") == "background" or delegation_id:
+            if delegation_id:
+                print(f"  Running in background (delegation {delegation_id}).")
+            else:
+                print("  Running in background.")
+        elif job.get("executed"):
+            outcome = "succeeded" if job.get("execution_success") else "failed"
+            print(f"  Ran now: {outcome}.")
+        elif job.get("execution_skipped"):
+            print(f"  {job['execution_skipped']}")
+        else:
+            print("  It will run on the next scheduler tick.")
     return 0
+
+
+def cron_notepad(args) -> int:
+    """Handle ``hermes cron notepad <job_id> [get|set|delete|list]``.
+
+    The per-job durable KV scratchpad (``cron/notepad.py``). This CLI is the
+    write path — a running cron agent updates its own notepad by invoking
+    these commands via its terminal tool; the scheduler injects non-empty
+    notepads into the job prompt on each run.
+    """
+    from cron import notepad
+
+    job_id = str(getattr(args, "job_id", "") or "")
+    action = getattr(args, "notepad_action", None) or "list"
+    key = getattr(args, "key", None)
+    value = getattr(args, "value", None)
+
+    if not job_id:
+        print(color("A job ID is required.", Colors.RED))
+        return 1
+
+    try:
+        if action == "set":
+            if key is None or value is None:
+                print(color("Usage: hermes cron notepad <job_id> set <key> <value>", Colors.RED))
+                return 1
+            notepad.set_note(job_id, key, value)
+            print(color(f"Set notepad key '{key}' for job {job_id}.", Colors.GREEN))
+            return 0
+
+        if action == "get":
+            if key is None:
+                print(color("Usage: hermes cron notepad <job_id> get <key>", Colors.RED))
+                return 1
+            stored = notepad.get_note(job_id, key)
+            if stored is None:
+                print(color(f"No notepad key '{key}' for job {job_id}.", Colors.YELLOW))
+                return 1
+            print(stored)
+            return 0
+
+        if action == "delete":
+            if key is None:
+                print(color("Usage: hermes cron notepad <job_id> delete <key>", Colors.RED))
+                return 1
+            if notepad.delete_note(job_id, key):
+                print(color(f"Deleted notepad key '{key}' for job {job_id}.", Colors.GREEN))
+                return 0
+            print(color(f"No notepad key '{key}' for job {job_id}.", Colors.YELLOW))
+            return 1
+
+        # list (default)
+        notes = notepad.list_notes(job_id)
+        if not notes:
+            print(color(f"Notepad for job {job_id} is empty.", Colors.DIM))
+            return 0
+        for note in notes:
+            print(f"  {color(note['key'], Colors.YELLOW)} = {note['value']}")
+            print(f"    {color('updated: ' + str(note['updated_at']), Colors.DIM)}")
+        return 0
+    except ValueError as exc:
+        print(color(f"Notepad error: {exc}", Colors.RED))
+        return 1
 
 
 def cron_command(args):
@@ -331,8 +637,14 @@ def cron_command(args):
         return 0
 
     if subcmd == "tick":
-        cron_tick()
+        return cron_tick()
+
+    if subcmd in {"runs", "history"}:
+        cron_runs(getattr(args, "job_id", None), getattr(args, "limit", 20))
         return 0
+
+    if subcmd == "notepad":
+        return cron_notepad(args)
 
     if subcmd in {"create", "add"}:
         return cron_create(args)
@@ -353,5 +665,5 @@ def cron_command(args):
         return _job_action("remove", args.job_id, "Removed")
 
     print(f"Unknown cron command: {subcmd}")
-    print("Usage: hermes cron [list|create|edit|pause|resume|run|remove|status|tick]")
+    print("Usage: hermes cron [list|create|edit|pause|resume|run|remove|status|runs|tick]")
     sys.exit(1)

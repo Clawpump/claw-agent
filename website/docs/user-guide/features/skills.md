@@ -62,6 +62,26 @@ Every installed skill is automatically available as a slash command:
 /excalidraw
 ```
 
+### Stacking multiple skills in one command
+
+You can invoke several skills in a single message by chaining slash commands
+at the start — every leading `/skill` token (up to 5) is loaded, and the rest
+becomes your instruction:
+
+```bash
+/github-pr-workflow /test-driven-development fix issue #123 and open a PR
+```
+
+Parsing stops at the first token that isn't an installed skill, so arguments
+that happen to start with `/` (like file paths) are never swallowed:
+
+```bash
+/ocr-and-documents /tmp/scan.pdf extract the tables   # loads one skill; /tmp/scan.pdf is the argument
+```
+
+For combinations you use repeatedly, prefer a [skill bundle](#skill-bundles) —
+same effect under one short command.
+
 The bundled `plan` skill is a good example. Running `/plan [request]` loads the skill's instructions, telling Hermes to inspect context if needed, write a markdown implementation plan instead of executing the task, and save the result under `.hermes/plans/` relative to the active workspace/backend working directory.
 
 You can also interact with skills through natural conversation:
@@ -70,6 +90,61 @@ You can also interact with skills through natural conversation:
 hermes chat --toolsets skills -q "What skills do you have?"
 hermes chat --toolsets skills -q "Show me the axolotl skill"
 ```
+
+## Learning a skill from sources (`/learn`)
+
+`/learn` is the fast way to turn something you already know — or a pile of
+reference material — into a reusable skill, without hand-writing the
+`SKILL.md`. It is open-ended: point it at *anything you can describe* and the
+agent gathers the material with the tools it already has, then authors a skill
+that follows the [house authoring standards](#skillmd-format) (≤60-char
+description, the standard section order, Hermes-tool framing, no invented
+commands).
+
+```bash
+# A local SDK or doc directory — read with read_file / search_files
+/learn the REST client in ~/projects/acme-sdk, focus on auth + pagination
+
+# An online doc page — fetched with web_extract
+/learn https://docs.example.com/api/quickstart
+
+# The workflow you just walked the agent through in this conversation
+/learn how I just deployed the staging server
+
+# Pasted notes / a described procedure
+/learn filing an expense: open the portal, New > Expense, attach the receipt, submit
+
+# A whole book, paper stack, or large docs corpus — becomes a knowledge-base skill
+/learn ~/books/designing-data-intensive-applications.pdf
+```
+
+### Large sources become knowledge-base skills
+
+When the source is a book, a stack of papers, a spec, or a large docs folder,
+the agent doesn't cram it into one file or reduce it to a lossy summary.
+Instead it authors an **expansive knowledge-base skill**: a lean `SKILL.md`
+carrying the source's core mental models plus an index, with one distilled
+file per chapter or topic under `references/` (plus a glossary or cheatsheet
+when the source earns them). Reference files cost nothing until a question
+needs one — the agent loads them on demand with `skill_view`, so query cost
+stays proportional to the answer, not the source. Re-running `/learn` with new
+material on the same topic folds it into the existing skill rather than
+creating a duplicate.
+
+The distillation synthesizes structure — frameworks, definitions, decision
+rules, anti-patterns — and never reproduces passages of the source text.
+
+Because the live agent does the sourcing, `/learn` works the same in the CLI,
+the messaging gateway, the TUI, and the dashboard — and on any terminal backend
+(local, Docker, remote), since there is no separate ingestion engine. In the
+**dashboard**, the Skills page has a **Learn a skill** button that opens a panel
+with a directory field, a URL field, and an open-ended text box; it composes a
+`/learn` request and runs it in chat.
+
+There is no model-tool footprint: `/learn` builds a standards-guided prompt and
+hands it to the agent as a normal turn. The agent saves the result with the
+`skill_manage` tool, so the [write-approval gate](#gating-agent-skill-writes-skillswrite_approval)
+applies if you have it on.
 
 ## Progressive Disclosure
 
@@ -234,6 +309,7 @@ See [Skill Settings](/user-guide/configuration#skill-settings) and [Creating Ski
 │   │   ├── references/            # Additional docs
 │   │   ├── templates/             # Output formats
 │   │   ├── scripts/               # Helper scripts callable from the skill
+│   │   ├── examples/              # Referenced example outputs
 │   │   └── assets/                # Supplementary files
 │   └── vllm/
 │       └── SKILL.md
@@ -247,6 +323,52 @@ See [Skill Settings](/user-guide/configuration#skill-settings) and [Creating Ski
 │   └── audit.log
 └── .bundled_manifest              # Tracks seeded bundled skills
 ```
+
+Third-party URL and GitHub installs include `SKILL.md` plus the exact local
+files it references under `references/`, `templates/`, `scripts/`, `assets/`,
+and `examples/`. Unreferenced repository files are not copied. Hermes scans the
+complete quarantined bundle and records the source URL, exact content hash,
+scanner version, findings, timestamp, and fresh-or-cached status in
+`skills/.hub/lock.json`.
+
+### Advisory SkillEvaluator scan
+
+In addition to the built-in security scanner (which enforces the install
+policy above), Hermes can run [NVIDIA SkillEvaluator](https://github.com/NVIDIA/SkillEvaluator)
+Tier 1 checks on every hub install as a second opinion. Tier 1 is
+deterministic and keyless — PII detection (leaked emails, personal paths,
+connection strings), unicode-smuggling detection, script lint, license
+compliance, and a static security scan via
+[NVIDIA SkillSpector](https://github.com/NVIDIA/SkillSpector).
+
+The scan is **advisory only**: findings are printed with file and line
+before the install confirmation, and the install continues. Findings that
+look like real credentials (private keys, cloud access keys, tokens,
+credentialed connection strings) are highlighted in red so you can review
+the flagged lines before deciding. PII-class findings are informational —
+the upstream scanner has known false-positive classes (e.g.
+`git@github.com` SSH syntax, documentation example emails), so they never
+block anything.
+
+To enable it, install the optional scanner binaries (the second one powers
+the `security` check; without it that check simply reports "not run"):
+
+```bash
+uv tool install --python 3.13 \
+  "skillevaluator @ git+https://github.com/NVIDIA/SkillEvaluator.git@v0.1.0"
+uv tool install "git+https://github.com/NVIDIA/SkillSpector.git@v2.9.5"
+```
+
+Without the binary on PATH the scan is silently skipped. To turn it off
+entirely:
+
+```yaml
+skills:
+  tier1_advisory: false
+```
+
+The dashboard's Browse-hub scan button returns the same advisory data in
+its response (`tier1` field) alongside the built-in scanner's verdict.
 
 ## External Skill Directories
 
@@ -289,6 +411,49 @@ Paths support `~` expansion and `${VAR}` environment variable substitution.
 ```
 
 All four skills appear in your skill index. If you create a new skill called `my-custom-workflow` locally, it shadows the external version.
+
+## Project-Local Skills
+
+Repos can carry their own skills, active only for sessions started inside that project — the same pattern other agent harnesses use for repo-local configuration. When you launch Hermes inside a git checkout, it looks for skills in:
+
+```text
+<project-root>/.hermes/skills/    # Hermes-native location
+<project-root>/.agents/skills/    # cross-tool convention (shared with other agent CLIs)
+```
+
+The project root is the nearest ancestor directory containing `.git` (worktrees and submodules count).
+
+### Trusting a project
+
+Skills are procedure documents the agent follows, so Hermes does **not** auto-load them from arbitrary cloned repos. The first time you run Hermes in a repo with project skills, the banner shows a notice:
+
+```text
+◆ 3 project skill(s) found in /home/you/myproject but not loaded — run `hermes skills trust` to enable them.
+```
+
+Trust the repo once (from inside it, or by passing the path):
+
+```bash
+hermes skills trust             # trust the current repo
+hermes skills trust ~/myproject # or explicitly
+hermes skills untrust           # revoke
+```
+
+Trusted roots are stored in `skills.trusted_project_dirs` in `~/.hermes/config.yaml`. Set `skills.project_discovery: false` to turn the feature off entirely (no scanning, no notices).
+
+### Precedence
+
+Project skills are the **highest-precedence tier**: `project → local (~/.hermes/skills/) → external_dirs`. A project skill named `deploy` overrides a same-named profile or bundled skill for sessions inside that repo — that's the point: vendored repo skills win on their home turf, without touching your global profile. Project skills are tagged `[project]` in the agent's skill index so provenance stays visible.
+
+Like external dirs, project skill directories are treated as repo-owned: autonomous skill maintenance (the curator) never modifies them, and new agent-created skills always go to `~/.hermes/skills/`.
+
+### Scan-time quarantine
+
+Trust is a repo-level decision, but a repo's skill content changes with every `git pull`. To close that gap, every project skill is scanned with the same security scanner used for Skills Hub installs before it enters the index. A skill whose scan verdict is **dangerous** (prompt-injection directives, credential-exfiltration commands, hidden-text tricks) is quarantined: it does not appear in the skill index, `skills_list`, slash commands, and refuses to load by name with an explanatory error. Scans are content-hash cached under `~/.hermes/cache/project_skill_scans/` (never inside your repo) and re-run automatically when the skill's content changes.
+
+### Non-interactive surfaces (cron, API, ACP)
+
+Cron jobs and other non-interactive surfaces inherit your interactive trust decision — they never prompt and never auto-trust. The project root resolves from the surface's working directory (a cron job's `workdir`, via the same mechanism the terminal tool uses). A cron job whose `workdir` is inside a repo you previously trusted loads that repo's project skills; a job in an untrusted or undecided repo loads none.
 
 ## Skill Bundles
 
@@ -379,12 +544,20 @@ A bundle is just a YAML alias — it doesn't install skills for you. The skills 
 
 The agent can create, update, and delete its own skills via the `skill_manage` tool. This is the agent's **procedural memory** — when it figures out a non-trivial workflow, it saves the approach as a skill for future reuse.
 
+Skills and memory work together in the self-improvement loop: memory stores
+small durable facts that should always be in context, while skills store longer
+procedures that should load only when relevant. The background review can
+suggest or stage skill changes after a session, but the write-approval gate
+below lets you require human review before those changes land.
+
 ### When the Agent Creates Skills
 
-- After completing a complex task (5+ tool calls) successfully
+The system prompt asks the agent to record a non-trivial workflow with `skill_manage` for
+future reuse. In practice that covers:
+
+- When it worked out a multi-step workflow worth repeating
 - When it hit errors or dead ends and found the working path
 - When the user corrected its approach
-- When it discovered a non-trivial workflow
 
 ### Actions
 
@@ -455,7 +628,7 @@ hermes skills install openai/skills/k8s           # Install with security scan
 hermes skills install official/security/1password
 hermes skills install skills-sh/vercel-labs/json-render/json-render-react --force
 hermes skills install well-known:https://mintlify.com/docs/.well-known/skills/mintlify
-hermes skills install https://sharethis.chat/SKILL.md              # Direct URL (single-file SKILL.md)
+hermes skills install https://sharethis.chat/SKILL.md              # Direct URL (+ referenced support files)
 hermes skills install https://example.com/SKILL.md --name my-skill # Override name when frontmatter has none
 hermes skills list --source hub                   # List hub-installed skills
 hermes skills check                               # Check installed hub skills for upstream updates
@@ -476,7 +649,7 @@ hermes skills tap add myorg/skills-repo           # Add a custom GitHub source
 | `official` | `official/security/1password` | Optional skills shipped with Hermes. |
 | `skills-sh` | `skills-sh/vercel-labs/agent-skills/vercel-react-best-practices` | Searchable via `hermes skills search <query> --source skills-sh`. Hermes resolves alias-style skills when the skills.sh slug differs from the repo folder. |
 | `well-known` | `well-known:https://mintlify.com/docs/.well-known/skills/mintlify` | Skills served directly from `/.well-known/skills/index.json` on a website. Search using the site or docs URL. |
-| `url` | `https://sharethis.chat/SKILL.md` | Direct HTTP(S) URL to a single-file `SKILL.md`. Name resolution: frontmatter → URL slug → interactive prompt → `--name` flag. |
+| `url` | `https://sharethis.chat/SKILL.md` | Direct HTTP(S) URL to `SKILL.md` plus explicitly referenced support files. Name resolution: frontmatter → URL slug → interactive prompt → `--name` flag. |
 | `github` | `openai/skills/k8s` | Direct GitHub repo/path installs and custom taps. |
 | `clawhub`, `lobehub`, `browse-sh` | Source-specific identifiers | Community or marketplace integrations. |
 
@@ -570,17 +743,7 @@ A third-party skills marketplace integrated as a community source.
 - Site: [clawhub.ai](https://clawhub.ai/)
 - Hermes source id: `clawhub`
 
-#### 6. Claude marketplace-style repos (`claude-marketplace`)
-
-Hermes supports marketplace repos that publish Claude-compatible plugin/marketplace manifests.
-
-Known integrated sources include:
-- [anthropics/skills](https://github.com/anthropics/skills)
-- [aiskillstore/marketplace](https://github.com/aiskillstore/marketplace)
-
-Hermes source id: `claude-marketplace`
-
-#### 7. LobeHub (`lobehub`)
+#### 6. LobeHub (`lobehub`)
 
 Hermes can search and convert agent entries from LobeHub's public catalog into installable Hermes skills.
 
@@ -589,7 +752,7 @@ Hermes can search and convert agent entries from LobeHub's public catalog into i
 - Backing repo: [lobehub/lobe-chat-agents](https://github.com/lobehub/lobe-chat-agents)
 - Hermes source id: `lobehub`
 
-#### 8. browse.sh (`browse-sh`)
+#### 7. browse.sh (`browse-sh`)
 
 Hermes integrates with [browse.sh](https://browse.sh), Browserbase's catalog of 200+ site-specific browser-automation SKILL.md files (Airbnb, Amazon, arXiv, 12306.cn, Etsy, Xero, and many more). Each skill describes how to drive one website end-to-end and is suitable for use with Hermes' browser tools and any browser-automation skills you already have installed.
 
@@ -606,13 +769,13 @@ hermes skills install browse-sh/airbnb.com/search-listings-ddgioa
 
 Identifiers use the form `browse-sh/<hostname>/<task-id>` and match the slug exposed by the browse.sh catalog. Content is resolved through the per-skill detail endpoint (`/api/skills/<slug>` → `skillMdUrl`), not through the catalog's GitHub `sourceUrl`.
 
-#### 9. Direct URL (`url`)
+#### 8. Direct URL (`url`)
 
-Install a single-file `SKILL.md` directly from any HTTP(S) URL — useful when an author hosts a skill on their own site (no hub listing, no GitHub path to type). Hermes fetches the URL, parses the YAML frontmatter, security-scans it, and installs.
+Install `SKILL.md` directly from any HTTP(S) URL — useful when an author hosts a skill on their own site (no hub listing, no GitHub path to type). Hermes also fetches explicitly referenced files under `references/`, `templates/`, `scripts/`, `assets/`, and `examples/`, then scans and installs the complete bundle.
 
 - Hermes source id: `url`
 - Identifier: the URL itself (no prefix needed)
-- Scope: **single-file `SKILL.md`** only. Multi-file skills with `references/` or `scripts/` need a manifest and should be published via one of the other sources above.
+- Scope: `SKILL.md` plus exact referenced support files in the allowlisted directories. Hermes does not enumerate or copy unrelated files from the host.
 
 ```bash
 hermes skills install https://sharethis.chat/SKILL.md
@@ -675,9 +838,12 @@ The hub now tracks enough provenance to re-check upstream copies of installed sk
 hermes skills check          # Report which installed hub skills changed upstream
 hermes skills update         # Reinstall only the skills with updates available
 hermes skills update react   # Update one specific installed hub skill
+hermes skills update react --force   # Overwrite a skill you've edited locally
 ```
 
 This uses the stored source identifier plus the current upstream bundle content hash to detect drift.
+
+Skills you have edited locally (the on-disk content no longer matches the hash recorded at install time) are **skipped** by `hermes skills update` so your changes are never silently overwritten. Pass `--force` to replace them with the upstream version anyway.
 
 :::tip GitHub rate limits
 Skills hub operations use the GitHub API, which has a rate limit of 60 requests/hour for unauthenticated users. If you see rate-limit errors during install or search, set `GITHUB_TOKEN` in your `.env` file to increase the limit to 5,000 requests/hour. The error message includes an actionable hint when this happens.
@@ -752,7 +918,7 @@ hermes skills install my-org/hermes-skills/deploy-runbook
 
 #### Non-default paths
 
-If your skills don't live under `skills/` (common when you're adding a `skills/` subtree to an existing project), edit the tap entry in `~/.hermes/.hub/taps.json`:
+If your skills don't live under `skills/` (common when you're adding a `skills/` subtree to an existing project), edit the tap entry in `~/.hermes/skills/.hub/taps.json`:
 
 ```json
 {
@@ -794,7 +960,7 @@ Inside a running session:
 /skills tap remove myorg/skills-repo
 ```
 
-Taps are stored in `~/.hermes/.hub/taps.json` (created on demand).
+Taps are stored in `~/.hermes/skills/.hub/taps.json` (created on demand).
 
 ## Bundled skill updates (`hermes skills reset`)
 

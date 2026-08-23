@@ -3,8 +3,14 @@ import type { MutableRefObject } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { $resumeExhaustedSessionId, setResumeExhaustedSessionId } from '@/store/session'
+import { markSelectionRestore } from '@/store/session-states'
 
 import { useRouteResume } from './use-route-resume'
+
+// The hook only arms the boot-restore one-shot; the listener consuming it lives
+// in the real store (covered by session-states.test.ts). Mock the module so the
+// store's side effects (persistence listeners) stay out of this harness.
+vi.mock('@/store/session-states', () => ({ markSelectionRestore: vi.fn() }))
 
 interface HarnessProps {
   activeSessionId: null | string
@@ -17,6 +23,7 @@ interface HarnessProps {
   resumeSession: (sessionId: string, focus: boolean) => Promise<unknown>
   resumeFailedSessionId?: null | string
   resumeExhaustedSessionId?: null | string
+  sessionResumeRequest?: null | { sequence: number; sessionId: string }
   routedSessionId: null | string
   runtimeIdByStoredSessionIdRef: MutableRefObject<Map<string, string>>
   selectedStoredSessionId: null | string
@@ -27,9 +34,10 @@ interface HarnessProps {
 function RouteResumeHarness({
   resumeFailedSessionId = null,
   resumeExhaustedSessionId = null,
+  sessionResumeRequest = null,
   ...props
 }: HarnessProps) {
-  useRouteResume({ ...props, resumeExhaustedSessionId, resumeFailedSessionId })
+  useRouteResume({ ...props, resumeExhaustedSessionId, resumeFailedSessionId, sessionResumeRequest })
 
   return null
 }
@@ -196,6 +204,45 @@ describe('useRouteResume', () => {
     expect(resumeSession).toHaveBeenCalledWith('session-2', true)
   })
 
+  it('arms the boot-restore one-shot for the FIRST resume only (⌘R tab persistence)', () => {
+    // Factory mocks survive restoreAllMocks — drop calls earlier tests made.
+    vi.mocked(markSelectionRestore).mockClear()
+    const resumeSession = vi.fn(async () => undefined)
+    const startFreshSessionDraft = vi.fn()
+    const activeSessionIdRef: MutableRefObject<null | string> = { current: null }
+    const creatingSessionRef = { current: false }
+    const runtimeIdByStoredSessionIdRef = { current: new Map() }
+    const selectedStoredSessionIdRef: MutableRefObject<null | string> = { current: null }
+
+    const props = {
+      activeSessionId: null,
+      activeSessionIdRef,
+      creatingSessionRef,
+      currentView: 'chat',
+      freshDraftReady: false,
+      gatewayState: 'open',
+      resumeSession,
+      runtimeIdByStoredSessionIdRef,
+      selectedStoredSessionId: null,
+      selectedStoredSessionIdRef,
+      startFreshSessionDraft
+    }
+
+    // Cold start: the window mounts already routed at /session-1 (the reload).
+    const { rerender } = render(
+      <RouteResumeHarness {...props} locationPathname="/session-1" routedSessionId="session-1" />
+    )
+
+    expect(resumeSession).toHaveBeenCalledWith('session-1', true)
+    expect(markSelectionRestore).toHaveBeenCalledTimes(1)
+
+    // A later route change is a real navigation: resume fires, one-shot doesn't.
+    rerender(<RouteResumeHarness {...props} locationPathname="/session-2" routedSessionId="session-2" />)
+
+    expect(resumeSession).toHaveBeenCalledWith('session-2', true)
+    expect(markSelectionRestore).toHaveBeenCalledTimes(1)
+  })
+
   it('resumes the selected route again when the gateway reconnects', () => {
     const resumeSession = vi.fn(async () => undefined)
     const startFreshSessionDraft = vi.fn()
@@ -259,6 +306,39 @@ describe('useRouteResume', () => {
         startFreshSessionDraft={startFreshSessionDraft}
       />
     )
+
+    expect(resumeSession).toHaveBeenCalledTimes(1)
+    expect(resumeSession).toHaveBeenCalledWith('session-1', true)
+  })
+
+  it('re-resumes an already-active same route when a plugin explicitly requests hydration', () => {
+    const resumeSession = vi.fn(async () => undefined)
+    const startFreshSessionDraft = vi.fn()
+    const activeSessionIdRef: MutableRefObject<null | string> = { current: 'runtime-1' }
+    const creatingSessionRef = { current: false }
+    const runtimeIdByStoredSessionIdRef = { current: new Map([['session-1', 'runtime-1']]) }
+    const selectedStoredSessionIdRef: MutableRefObject<null | string> = { current: 'session-1' }
+
+    const props = {
+      activeSessionId: 'runtime-1',
+      activeSessionIdRef,
+      creatingSessionRef,
+      currentView: 'chat',
+      freshDraftReady: false,
+      gatewayState: 'open',
+      locationPathname: '/session-1',
+      resumeSession,
+      routedSessionId: 'session-1',
+      runtimeIdByStoredSessionIdRef,
+      selectedStoredSessionId: 'session-1',
+      selectedStoredSessionIdRef,
+      startFreshSessionDraft
+    }
+
+    const { rerender } = render(<RouteResumeHarness {...props} />)
+    expect(resumeSession).not.toHaveBeenCalled()
+
+    rerender(<RouteResumeHarness {...props} sessionResumeRequest={{ sequence: 1, sessionId: 'session-1' }} />)
 
     expect(resumeSession).toHaveBeenCalledTimes(1)
     expect(resumeSession).toHaveBeenCalledWith('session-1', true)
@@ -424,11 +504,13 @@ describe('useRouteResume bounded auto-retry after a failed resume', () => {
     // the store, which doesn't feed back into the prop in this harness.
     const { rerender } = render(<RouteResumeHarness {...props} resumeFailedSessionId="session-1" />)
     resumeSession.mockClear()
+
     for (let i = 0; i < 8; i += 1) {
       vi.advanceTimersByTime(8_000)
       rerender(<RouteResumeHarness {...props} resumeFailedSessionId={null} />)
       rerender(<RouteResumeHarness {...props} resumeFailedSessionId="session-1" />)
     }
+
     expect(resumeSession.mock.calls.length).toBe(4) // capped
     expect($resumeExhaustedSessionId.get()).toBe('session-1')
 
@@ -464,6 +546,7 @@ describe('useRouteResume bounded auto-retry after a failed resume', () => {
     const { rerender } = render(
       <RouteResumeHarness {...props} resumeFailedSessionId="session-1" resumeSession={vi.fn(async () => undefined)} />
     )
+
     for (let j = 0; j < 8; j += 1) {
       rerender(
         <RouteResumeHarness {...props} resumeFailedSessionId="session-1" resumeSession={vi.fn(async () => undefined)} />

@@ -1,12 +1,14 @@
 ---
 name: pay-sh
-description: "Pay.sh / x402 paid APIs paid with the ClawPump agent wallet — search a catalog of pay-per-call services (images, data, email, voice…) and pay per call in USDC straight from the agent's custodial wallet via the ClawPump MCP. Use when the user mentions pay.sh, x402, 402 payments, or paying for an API/service with the agent's funds."
+description: "Call x402 APIs with a ClawPump agent wallet."
 version: 2.0.0
+author: ClawPump
+license: MIT
 platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [pay-sh, x402, solana, payments, usdc, apis, mcp, clawpump]
-    related_skills: [clawpump, mcp]
+    related_skills: [clawpump]
 ---
 
 # Pay.sh (x402 paid APIs) — paid by the ClawPump wallet

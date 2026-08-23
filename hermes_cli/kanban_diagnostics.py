@@ -10,8 +10,8 @@ stuck blocked for too long, etc. Each one carries:
 * A list of **suggested actions** — structured entries the dashboard
   turns into buttons and the CLI turns into hints.
 
-Rules run over (task, recent events, recent runs) and emit diagnostics.
-They are stateless and read-only — no DB writes. Callers compute
+Rules run over (task, recent events, recent runs, optional graph context) and
+emit diagnostics. They are stateless and read-only — no DB writes. Callers compute
 diagnostics on demand (on ``/board`` load, ``/tasks/:id`` fetch, or
 ``hermes kanban diagnostics``).
 
@@ -355,11 +355,11 @@ def _rule_hallucinated_cards(task, events, runs, now, cfg) -> list[Diagnostic]:
         severity="error",
         title="Worker claimed cards that don't exist",
         detail=(
-            f"The completing worker declared created_cards that either didn't "
-            f"exist or weren't created by its profile. The completion was "
-            f"blocked and the task stayed in its prior state. "
-            f"Usually means the worker hallucinated ids instead of capturing "
-            f"return values from kanban_create."
+            "The completing worker declared created_cards that either didn't "
+            "exist or weren't created by its profile. The completion was "
+            "blocked and the task stayed in its prior state. "
+            "Usually means the worker hallucinated ids instead of capturing "
+            "return values from kanban_create."
         ),
         actions=actions,
         first_seen_at=first,
@@ -530,7 +530,20 @@ def _rule_repeated_failures(task, events, runs, now, cfg) -> list[Diagnostic]:
 
     Accepts the legacy ``spawn_failure_threshold`` config key for
     back-compat.
+
+    Terminal statuses are exempt: a done/archived card has nothing left
+    to retry, so a lingering failure streak is history, not a signal.
+    (``complete_task`` resets the counter, but a manual done — e.g. a
+    dashboard drag — ends no run and used to leave the flag stuck.)
+
+    A fresh attempt in flight (``running``) is also exempt: retrying a
+    task should clear the stale failure banner until this attempt also
+    resolves. Otherwise a card that's actively trying again still shows
+    "failed Nx", which reads as a current failure. It re-fires if the new
+    run fails too (status leaves ``running`` with a recorded outcome).
     """
+    if _task_field(task, "status") in ("done", "archived", "running"):
+        return []
     threshold = _positive_int(cfg.get(
         "failure_threshold",
         cfg.get("spawn_failure_threshold", 3),
@@ -649,7 +662,20 @@ def _rule_repeated_crashes(task, events, runs, now, cfg) -> list[Diagnostic]:
     total failures) so the operator gets a crash-specific heads-up
     before the unified rule kicks in. Suppresses itself when the
     unified rule is also about to fire, to avoid double-flagging.
+
+    Terminal statuses are exempt for the same reason as
+    ``repeated_failures`` — with one extra wrinkle: this rule reads run
+    history, and a manual done (dashboard drag) appends no ``completed``
+    run to break the crash streak, so the flag was permanent (#kanban
+    desktop dogfood). Done means done.
+
+    ``running`` is exempt too: a fresh attempt is in flight, and its
+    in-flight run (no outcome yet) doesn't break the trailing crash scan,
+    so a retried card kept showing "crashed Nx" over an active run. The
+    banner re-fires if the new attempt also crashes.
     """
+    if _task_field(task, "status") in ("done", "archived", "running"):
+        return []
     failure_threshold = int(cfg.get(
         "failure_threshold",
         cfg.get("spawn_failure_threshold", 3),
@@ -721,6 +747,84 @@ def _rule_repeated_crashes(task, events, runs, now, cfg) -> list[Diagnostic]:
         last_seen_at=now,
         count=consecutive,
         data={"consecutive_crashes": consecutive, "last_error": last_err},
+    )]
+
+
+def _rule_review_dependency_deadlock(task, events, runs, now, cfg) -> list[Diagnostic]:
+    """Detect a legacy review handoff that starves downstream children.
+
+    Older workers were instructed to sticky-block an implementation with a
+    ``review-required:`` reason. A separately modelled reviewer child cannot
+    promote until that parent is terminal, so the lane has no autonomous next
+    step. This compatibility diagnostic is graph-aware but deliberately leaves
+    both the dependency graph and the user's sticky block unchanged.
+    """
+    if _task_field(task, "status") != "blocked":
+        return []
+
+    latest_block = None
+    for event in events:
+        if _event_kind(event) == "blocked":
+            latest_block = event
+    if latest_block is None:
+        return []
+    reason = str(_parse_payload(latest_block).get("reason") or "").strip()
+    if not reason.lower().startswith("review-required:"):
+        return []
+
+    graph = cfg.get("_graph")
+    if not isinstance(graph, dict):
+        return []
+    waiting_children = [
+        child
+        for child in (graph.get("children") or [])
+        if isinstance(child, dict) and child.get("status") == "todo"
+    ]
+    if not waiting_children:
+        return []
+
+    task_id = str(_task_field(task, "id") or "")
+    child_ids = [
+        str(child.get("id"))
+        for child in waiting_children
+        if child.get("id")
+    ]
+    actions: list[DiagnosticAction] = []
+    if task_id:
+        actions.append(DiagnosticAction(
+            kind="cli_hint",
+            label="Complete the finished implementation phase",
+            payload={"command": f"hermes kanban complete {task_id}"},
+            suggested=True,
+        ))
+    if task_id and child_ids:
+        actions.append(DiagnosticAction(
+            kind="cli_hint",
+            label="Or unlink the incorrectly gated reviewer",
+            payload={"command": f"hermes kanban unlink {task_id} {child_ids[0]}"},
+        ))
+
+    blocked_at = _event_ts(latest_block) or now
+    return [Diagnostic(
+        kind="review_dependency_deadlock",
+        severity="error",
+        title=f"Review handoff blocks {len(child_ids)} dependent task(s)",
+        detail=(
+            "This implementation is sticky-blocked for review while its "
+            "downstream task(s) require the implementation to be done or "
+            "archived before they can run. Complete the finished phase, unlink "
+            "the incorrect dependency, or migrate this workflow to the "
+            "first-class review lifecycle."
+        ),
+        actions=actions,
+        first_seen_at=blocked_at,
+        last_seen_at=blocked_at,
+        count=len(child_ids),
+        data={
+            "blocked_parent_id": task_id,
+            "waiting_child_ids": child_ids,
+            "block_reason": reason,
+        },
     )]
 
 
@@ -982,6 +1086,7 @@ _RULES: list[RuleFn] = [
     _rule_prose_phantom_refs,
     _rule_repeated_failures,
     _rule_repeated_crashes,
+    _rule_review_dependency_deadlock,
     _rule_stuck_in_blocked,
     _rule_block_unblock_cycling,
     _rule_stranded_in_ready,
@@ -996,6 +1101,7 @@ DIAGNOSTIC_KINDS = (
     "prose_phantom_refs",
     "repeated_failures",
     "repeated_crashes",
+    "review_dependency_deadlock",
     "stuck_in_blocked",
     "block_unblock_cycling",
     "stranded_in_ready",
@@ -1069,6 +1175,7 @@ def compute_task_diagnostics(
     *,
     now: Optional[int] = None,
     config: Optional[dict] = None,
+    graph: Optional[dict] = None,
 ) -> list[Diagnostic]:
     """Run every rule against a single task's state and return a
     severity-sorted list of active diagnostics.
@@ -1079,6 +1186,8 @@ def compute_task_diagnostics(
     now_ts = int(now if now is not None else time.time())
     config = config or {}
     cfg = {**DEFAULT_CONFIG, **config}
+    if graph is not None:
+        cfg["_graph"] = graph
     if (
         "failure_threshold" not in config
         and "spawn_failure_threshold" not in config

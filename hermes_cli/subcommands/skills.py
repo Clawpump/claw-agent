@@ -18,6 +18,27 @@ def build_skills_parser(subparsers, *, cmd_skills: Callable) -> None:
     )
     skills_subparsers = skills_parser.add_subparsers(dest="skills_action")
 
+    skills_trust = skills_subparsers.add_parser(
+        "trust",
+        help="Trust a project so its repo-local skills (./.hermes/skills, ./.agents/skills) load",
+    )
+    skills_trust.add_argument(
+        "path",
+        nargs="?",
+        default=None,
+        help="Project root to trust (default: enclosing git checkout of cwd)",
+    )
+
+    skills_untrust = skills_subparsers.add_parser(
+        "untrust", help="Revoke project-skill trust for a repo"
+    )
+    skills_untrust.add_argument(
+        "path",
+        nargs="?",
+        default=None,
+        help="Project root to untrust (default: enclosing git checkout of cwd)",
+    )
+
     skills_browse = skills_subparsers.add_parser(
         "browse", help="Browse all available skills (paginated)"
     )
@@ -39,8 +60,16 @@ def build_skills_parser(subparsers, *, cmd_skills: Callable) -> None:
             "clawhub",
             "lobehub",
             "browse-sh",
+            # Provider filters (GitHub taps stored under source="github"):
+            "nvidia",
+            "openai",
+            "anthropic",
+            "huggingface",
+            "voltagent",
+            "gstack",
+            "minimax",
         ],
-        help="Filter by source (default: all)",
+        help="Filter by source or provider (e.g. nvidia, openai) (default: all)",
     )
 
     skills_search = skills_subparsers.add_parser(
@@ -59,9 +88,18 @@ def build_skills_parser(subparsers, *, cmd_skills: Callable) -> None:
             "clawhub",
             "lobehub",
             "browse-sh",
+            # Provider filters (GitHub taps stored under source="github"):
+            "nvidia",
+            "openai",
+            "anthropic",
+            "huggingface",
+            "voltagent",
+            "gstack",
+            "minimax",
         ],
+        help="Filter by source or provider (e.g. nvidia, openai)",
     )
-    skills_search.add_argument("--limit", type=int, default=10, help="Max results")
+    skills_search.add_argument("--limit", type=int, default=25, help="Max results")
     skills_search.add_argument(
         "--json",
         action="store_true",
@@ -122,6 +160,11 @@ def build_skills_parser(subparsers, *, cmd_skills: Callable) -> None:
         nargs="?",
         help="Specific skill to update (default: all outdated skills)",
     )
+    skills_update.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite skills you have edited locally (they are skipped by default)",
+    )
 
     skills_audit = skills_subparsers.add_parser(
         "audit", help="Re-scan installed hub skills"
@@ -139,6 +182,12 @@ def build_skills_parser(subparsers, *, cmd_skills: Callable) -> None:
         "uninstall", help="Remove a hub-installed skill"
     )
     skills_uninstall.add_argument("name", help="Skill name to remove")
+    skills_uninstall.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="Skip confirmation prompt",
+    )
 
     skills_reset = skills_subparsers.add_parser(
         "reset",
@@ -295,4 +344,5 @@ def build_skills_parser(subparsers, *, cmd_skills: Callable) -> None:
         "config",
         help="Interactive skill configuration — enable/disable individual skills",
     )
+
     skills_parser.set_defaults(func=cmd_skills)
