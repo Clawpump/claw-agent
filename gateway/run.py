@@ -7146,6 +7146,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         self._session_db_pinned: Any = _SESSION_DB_UNPINNED
         self._session_db_handles: Dict[Path, Any] = {}
         self._session_db_handles_lock = threading.Lock()
+        from gateway.session_db_recovery import RecoverableHandleCache
+
+        self._session_db_handle_cache = RecoverableHandleCache(
+            handles=self._session_db_handles,
+            lock=self._session_db_handles_lock,
+        )
         try:
             self._open_session_db_for_active_scope(raise_on_error=True)
         except Exception as e:
@@ -7271,29 +7277,46 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         search on a multiplexed gateway read the *serving profile's* store
         rather than the root one.
 
-        One ``AsyncSessionDB`` is cached per resolved path under a lock, so
+        One ``AsyncSessionDB`` is cached per resolved path, so
         the wrapper identity is stable per profile (callers compare and stash
-        it) and two profiles never share a handle.  A construction failure is
-        cached as ``None`` for that path so a broken store degrades once, not
-        per command; ``raise_on_error=True`` (construction-time priming)
-        propagates the failure instead so ``__init__`` can record
-        ``_session_db_init_error`` for the #88235 broadcast.
+        it) and two profiles never share a handle. A construction failure
+        enters bounded backoff; one caller retries after the deadline while
+        concurrent callers continue to see the unavailable fallback.
+        ``raise_on_error=True`` (construction-time priming) propagates the
+        failure after recording that recoverable state so ``__init__`` can
+        record ``_session_db_init_error`` for the #88235 broadcast.
         """
         from hermes_state import AsyncSessionDB, SessionDB, _default_db_path
+        from gateway.session_db_recovery import RecoverableHandleCache
 
         path = Path(_default_db_path())
-        with self._session_db_handles_lock:
-            if path in self._session_db_handles:
-                return self._session_db_handles[path]
-            db = None
+        cache = getattr(self, "_session_db_handle_cache", None)
+        if cache is None:
+            # Compatibility for lightweight test runners built with
+            # object.__new__ rather than GatewayRunner.__init__.
+            cache = RecoverableHandleCache(
+                handles=self._session_db_handles,
+                lock=self._session_db_handles_lock,
+            )
+            self._session_db_handle_cache = cache
+
+        def _open():
             try:
-                db = AsyncSessionDB(SessionDB())
-            except Exception as e:
-                if raise_on_error:
-                    raise
-                logger.warning("SQLite session store not available: %s", e)
-            self._session_db_handles[path] = db
-            return db
+                return AsyncSessionDB(SessionDB())
+            except Exception as exc:
+                logger.warning("SQLite session store not available: %s", exc)
+                raise
+
+        def _recovered() -> None:
+            self._session_db_init_error = None
+            logger.info("SQLite session store recovered")
+
+        return cache.get(
+            path,
+            _open,
+            raise_on_error=raise_on_error,
+            on_recovered=_recovered,
+        )
 
     @property
     def _session_db(self) -> Any:
@@ -7320,17 +7343,16 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         ``SessionStore.close_all_db_handles``.  Handles are drained under the
         lock and closed outside it; a pinned handle is the pinner's to close.
         """
-        with self._session_db_handles_lock:
-            handles = [db for db in self._session_db_handles.values() if db is not None]
-            self._session_db_handles.clear()
-        for db in handles:
+        def _close(db) -> None:
             inner = getattr(db, "_db", db)
             if inner is None or not hasattr(inner, "close"):
-                continue
+                return
             try:
                 inner.close()
             except Exception as exc:
                 logger.debug("SessionDB close error during handle sweep: %s", exc)
+
+        self._session_db_handle_cache.close_all(_close)
 
     def _wire_teams_pipeline_runtime(self) -> None:
         """Bind the Teams meeting pipeline runtime to Graph webhook ingress.
@@ -17867,6 +17889,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             return await self._handle_heartbeat_command(event)
         if canonical == "refine":
             return await self._handle_refine_command(event)
+        if canonical == "review":
+            return await self._handle_review_command(event)
 
         if canonical == "moa":
             # /moa is one-shot sugar only: run a single prompt through the
@@ -24562,7 +24586,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 "2. Salvage with: sqlite3 ~/.hermes/state.db \".recover\" "
                 "(then replace state.db)\n"
                 "3. Restore from a backup in ~/.hermes/backups/\n"
-                f"Error: {error}"
+                "Run `hermes doctor` for sanitized diagnostics."
             )
         else:
             message = (
@@ -30196,6 +30220,8 @@ def _start_gateway_housekeeping(stop_event: threading.Event, adapters=None, loop
         cleanup_video_cache,
     )
     from tools.tool_result_storage import cleanup_spillover_cache
+    from tools.bot_mode_dm import cleanup_bot_dm_cache
+    from tools.bot_relay import cleanup_bot_relay_artifacts
     from hermes_cli.debug import _sweep_expired_pastes
 
     IMAGE_CACHE_EVERY = 60   # ticks — once per hour at default 60s interval
@@ -30215,6 +30241,8 @@ def _start_gateway_housekeeping(stop_event: threading.Event, adapters=None, loop
         ("Video", cleanup_video_cache),
         ("Screenshot", cleanup_screenshot_cache),
         ("Spillover", cleanup_spillover_cache),
+        ("Bot DM", cleanup_bot_dm_cache),
+        ("Bot relay", cleanup_bot_relay_artifacts),
     )
 
     logger.info("Gateway housekeeping started (interval=%ds)", interval)
@@ -30878,6 +30906,26 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     atexit.register(remove_pid_file)
     atexit.register(release_gateway_runtime_lock)
 
+    # Control socket (#92091 step 1) — the gateway-owned identify/status
+    # surface. Started immediately after the PID-file claim: winning that
+    # O_EXCL race is the moment this process becomes the authoritative
+    # gateway for its HERMES_HOME, so from here on "does a socket answer?"
+    # is a truthful liveness/identity query for updater and fleet consumers.
+    # Strictly non-fatal: a bind failure only means consumers fall back to
+    # the process-scan/state-file layer, exactly as before this feature.
+    _control_server = None
+    try:
+        from gateway.control_socket import GatewayControlServer
+
+        _control_server = GatewayControlServer()
+        if not await _control_server.start():
+            _control_server = None
+        else:
+            atexit.register(_control_server.cleanup_files)
+    except Exception as _cs_exc:
+        logger.debug("Control socket startup failed (non-fatal): %s", _cs_exc)
+        _control_server = None
+
     # Lifecycle ledger (NS-608): report if the previous gateway life died
     # uncleanly (SIGKILL / OOM / VM death — no exit path ran), then claim
     # the sentinel for this life. Placed after the PID-file/lock claim so
@@ -31074,6 +31122,17 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
 
     # Wait for shutdown
     await runner.wait_for_shutdown()
+
+    # Stop the control socket first: once shutdown begins this process is no
+    # longer a truthful "the gateway is serving here" answer, and a successor
+    # (--replace / supervisor respawn) must be able to bind. Early-exit paths
+    # above don't reach this; their process exit runs the atexit
+    # cleanup_files hook, and a successor clears any stale socket on bind.
+    if _control_server is not None:
+        try:
+            await _control_server.stop()
+        except Exception:
+            logger.debug("Control socket stop failed (non-fatal)", exc_info=True)
 
     try:
         from hermes_cli.nous_auth_keepalive import stop_nous_auth_keepalive
