@@ -91,16 +91,26 @@ declare global {
       // bar — so it mounts the real composer rather than a lookalike. Main
       // owns the window; `onChanged` keeps every window's toggle truthful.
       hud?: {
+        nativeDrag: boolean
+        windowing?: {
+          clientPlacement: boolean
+          controlDrag: boolean
+          nativeDrag: boolean
+          workspaceTransfer: boolean
+        }
         open: (request?: { sessionId?: null | string; profile?: null | string }) => Promise<{ ok: boolean }>
         close: () => Promise<{ ok: boolean }>
         setIgnoreMouse: (ignore: boolean) => void
         moveBy: (delta: { x: number; y: number; width: number; height: number }) => void
+        setWorkspaceTransfer?: (transferring: boolean) => void
         setBounds: (bounds: { x: number; y: number; width: number; height: number }) => void
+        resetLayout: () => Promise<{ ok: boolean }>
         setFrost: (showing: boolean) => Promise<{ ok: boolean }>
         setSession: (sessionId: null | string) => void
         onGoto: (callback: (sessionId: string) => void) => () => void
         onChanged: (callback: (state: { open: boolean; sessionId: null | string }) => void) => () => void
         onCursor: (callback: (point: { x: number; y: number } | null) => void) => () => void
+        onGameOverlay: (callback: (state: { active: boolean; app: string }) => void) => () => void
       }
       // Quick Entry: a global-hotkey mini composer window. Main owns the OS
       // shortcut registration + the persisted preference (it must restore the
@@ -207,6 +217,10 @@ declare global {
         set: (maxMb: number) => Promise<{ defaultMaxMb: number; maxBytes: number; maxMb: number }>
       }
       readFileText: (filePath: string) => Promise<HermesReadFileTextResult>
+      /** Full-source read for runtime desktop plugins (readFileText truncates
+       *  at the 512 KiB preview cap). Absent on older shells — callers fall
+       *  back to readFileText and must reject a `truncated` result. */
+      readPluginSource?: (filePath: string) => Promise<HermesReadFileTextResult>
       selectPaths: (options?: HermesSelectPathsOptions) => Promise<string[]>
       /** Native save dialog; returns the chosen path or null on cancel. */
       selectSavePath?: (options?: {
@@ -216,7 +230,12 @@ declare global {
       }) => Promise<null | string>
       writeClipboard: (text: string) => Promise<boolean>
       readClipboard: () => Promise<string>
-      saveGatewayFile?: (payload: { path: string; profile?: null | string; suggestedName?: string }) => Promise<{
+      saveGatewayFile?: (payload: {
+        connectionId?: null | string
+        path: string
+        profile?: null | string
+        suggestedName?: string
+      }) => Promise<{
         canceled?: boolean
         path?: string
         saved: boolean
@@ -879,6 +898,7 @@ export interface DesktopRosterAgent {
   connectionKind: DesktopConnectionKind
   connectionLabel: string
   profile: string
+  targetProfile?: string
   handle: string
 }
 

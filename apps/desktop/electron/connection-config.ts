@@ -151,6 +151,43 @@ function gatewayTicketFailure(error, authMessage, transportMessage) {
   return err
 }
 
+/**
+ * Retry a one-shot mint/fetch that can flap on brief network blips.
+ * Auth rejections (401/403 / needsOauthLogin) fail immediately — retrying those
+ * just hammers a dead session. Transport/server failures retry with short delays.
+ */
+async function withTransientRetries(run, options: any = {}) {
+  const attempts = Number.isInteger(options.attempts) && options.attempts > 0 ? options.attempts : 3
+  const delaysMs = Array.isArray(options.delaysMs) && options.delaysMs.length > 0 ? options.delaysMs : [250, 750]
+
+  const sleep =
+    typeof options.sleep === 'function'
+      ? options.sleep
+      : (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+  const isRetryable =
+    typeof options.isRetryable === 'function' ? options.isRetryable : (error: unknown) => !isGatewayAuthRejection(error)
+
+  let lastError: unknown
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await run()
+    } catch (error) {
+      lastError = error
+
+      if (!isRetryable(error) || attempt >= attempts - 1) {
+        throw error
+      }
+
+      const delay = delaysMs[Math.min(attempt, delaysMs.length - 1)]
+      await sleep(delay)
+    }
+  }
+
+  throw lastError
+}
+
 /** Serialize a fresh-WS-URL attempt across Electron's IPC boundary. */
 async function gatewayWsUrlIpcResult(resolveWsUrl: () => Promise<string>) {
   try {
@@ -774,6 +811,23 @@ function pathWithProfileScope(path, profile) {
   return `${parsed.pathname}${parsed.search}${parsed.hash}`
 }
 
+export interface RegistryBackendRequestScope {
+  remoteProfile?: null | string
+  sharedRemote?: boolean
+}
+
+/**
+ * Scope a REST path for a resolved registry backend. Shared remotes serve
+ * multiple profiles from one process and need an explicit profile query;
+ * isolated SSH backends already own one profile but may translate a Desktop
+ * alias in an existing self-profile filter.
+ */
+function pathForRegistryBackendRequest(path, profile, backend: RegistryBackendRequestScope) {
+  return backend.sharedRemote
+    ? pathWithProfileScope(path, profile)
+    : translateSelfProfileQuery(path, profile, backend.remoteProfile)
+}
+
 /**
  * Registry connection a REST request is explicitly pinned to, or null for the
  * legacy profile-routed path. An explicit `local` id must stay registry-scoped:
@@ -948,6 +1002,7 @@ export {
   normalizeRemoteHeaders,
   normalizeSshConfig,
   normAuthMode,
+  pathForRegistryBackendRequest,
   pathWithGlobalRemoteProfile,
   pathWithProfileScope,
   PRIVY_ACCESS_COOKIE_VARIANTS,
@@ -964,5 +1019,6 @@ export {
   RT_COOKIE_VARIANTS,
   savedProfileSsh,
   tokenPreview,
-  translateSelfProfileQuery
+  translateSelfProfileQuery,
+  withTransientRetries
 }

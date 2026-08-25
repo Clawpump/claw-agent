@@ -35,6 +35,7 @@ import {
   normalizeRemoteHeaders,
   normalizeSshConfig,
   normAuthMode,
+  pathForRegistryBackendRequest,
   pathWithGlobalRemoteProfile,
   pathWithProfileScope,
   profileHasRemoteConnection,
@@ -49,7 +50,8 @@ import {
   RT_COOKIE_VARIANTS,
   savedProfileSsh,
   tokenPreview,
-  translateSelfProfileQuery
+  translateSelfProfileQuery,
+  withTransientRetries
 } from './connection-config'
 
 // --- connectionScopeKey / normAuthMode ---
@@ -481,6 +483,27 @@ test('pathWithProfileScope keeps an explicit profile query and no-ops on empty p
   assert.equal(pathWithProfileScope('/api/cron/jobs?profile=all', 'research'), '/api/cron/jobs?profile=all')
   assert.equal(pathWithProfileScope('/api/cron/jobs', ''), '/api/cron/jobs')
   assert.equal(pathWithProfileScope('/api/cron/jobs', null), '/api/cron/jobs')
+})
+
+test('pathForRegistryBackendRequest uses the resolved registry backend scope', () => {
+  assert.equal(
+    pathForRegistryBackendRequest('/api/fs/read-data-url?path=%2Fsrv%2Fimage.png', 'research', {
+      sharedRemote: true
+    }),
+    '/api/fs/read-data-url?path=%2Fsrv%2Fimage.png&profile=research'
+  )
+  assert.equal(
+    pathForRegistryBackendRequest('/api/fs/download?path=%2Fsrv%2Freport.pdf&profile=mara', 'mara', {
+      remoteProfile: 'default'
+    }),
+    '/api/fs/download?path=%2Fsrv%2Freport.pdf&profile=default'
+  )
+  assert.equal(
+    pathForRegistryBackendRequest('/api/fs/download?path=%2Fsrv%2Freport.pdf', 'mara', {
+      remoteProfile: 'default'
+    }),
+    '/api/fs/download?path=%2Fsrv%2Freport.pdf'
+  )
 })
 
 // --- pathWithGlobalRemoteProfile ---
@@ -1132,6 +1155,54 @@ test('gateway ticket failures classify only explicit auth rejection statuses as 
   const serverFailure = gatewayTicketFailure(new Error('network timeout'), 'sign in', 'retry connection') as any
   assert.equal(serverFailure.message, 'retry connection')
   assert.equal(serverFailure.needsOauthLogin, undefined)
+})
+
+test('withTransientRetries retries transport blips but not auth rejections', async () => {
+  const sleeps: number[] = []
+  let transportAttempts = 0
+
+  const ticket = await withTransientRetries(
+    async () => {
+      transportAttempts += 1
+
+      if (transportAttempts < 3) {
+        throw Object.assign(new Error('500: unavailable'), { statusCode: 500 })
+      }
+
+      return 'tkt-ok'
+    },
+    {
+      delaysMs: [10, 10],
+      sleep: async (ms: number) => {
+        sleeps.push(ms)
+      }
+    }
+  )
+
+  assert.equal(ticket, 'tkt-ok')
+  assert.equal(transportAttempts, 3)
+  assert.deepEqual(sleeps, [10, 10])
+
+  let authAttempts = 0
+  await assert.rejects(
+    () =>
+      withTransientRetries(
+        async () => {
+          authAttempts += 1
+          throw Object.assign(new Error('401: rejected'), { statusCode: 401 })
+        },
+        {
+          delaysMs: [10],
+          sleep: async () => undefined
+        }
+      ),
+    (err: any) => {
+      assert.equal(err.statusCode, 401)
+
+      return true
+    }
+  )
+  assert.equal(authAttempts, 1)
 })
 
 test('gateway WS URL IPC result serializes success and the auth-vs-transport matrix', async () => {

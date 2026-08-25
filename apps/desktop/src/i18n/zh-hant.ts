@@ -81,6 +81,8 @@ export const zhHant = defineLocale({
       backendStopped: '後端已停止',
       desktopBootFailed: '桌面啟動失敗',
       gatewayConnectionLost: '與閘道的連線已中斷',
+      gatewayConnectionLostDetail:
+        'Still retrying in the background. You can keep reading and drafting — open Gateway settings if this persists.',
       gatewaySignInRequired: '需要閘道登入',
       ipcBridgeUnavailable: '桌面 IPC 橋接器不可用。'
     },
@@ -239,7 +241,8 @@ export const zhHant = defineLocale({
     muteHaptics: '靜音觸感回饋',
     unmuteHaptics: '開啟觸感回饋',
     openSettings: '開啟設定',
-    openStarmap: '開啟記憶圖譜'
+    openStarmap: '開啟記憶圖譜',
+    resetHudLayout: '重設 HUD 大小和位置'
   },
 
   language: {
@@ -399,6 +402,8 @@ export const zhHant = defineLocale({
       reactionsDesc: 'iMessage 風格的表情回應 — 你可以對訊息做出回應，Claw Agent 也能回應你的訊息。',
       composerPopoutTitle: '懸浮輸入框',
       composerPopoutDesc: '允許將輸入框拖出底部停靠區。關閉後，輸入框會鎖定在底部。',
+      vibeHeartsTitle: '心情愛心',
+      vibeHeartsDesc: '當你說謝謝、愛你、good bot 或送出愛心時飄出的愛心。與上方的訊息回應是兩回事。',
       embedsTitle: '內嵌預覽',
       embedsDesc:
         '豐富預覽會從第三方網站（YouTube、X 等）載入。詢問會在你允許前顯示佔位符；一律會自動載入；關閉則保留純連結。',
@@ -957,12 +962,12 @@ export const zhHant = defineLocale({
       providerDefault: '(提供方預設)',
       tasks: {
         vision: { label: '視覺', hint: '圖片分析' },
-        web_extract: { label: '網頁擷取', hint: '頁面摘要' },
         compression: { label: '壓縮', hint: '上下文壓縮' },
         skills_hub: { label: '技能中心', hint: '技能搜尋' },
         approval: { label: '核准', hint: '智慧自動核准' },
         mcp: { label: 'MCP', hint: 'MCP 工具路由' },
         title_generation: { label: '標題生成', hint: '工作階段標題' },
+        review: { label: '評審', hint: '/review 評審子代理' },
         curator: { label: '策展器', hint: '技能使用審查' }
       }
     },
@@ -1471,6 +1476,36 @@ export const zhHant = defineLocale({
     switchToConnection: name => `切換至 ${name}`,
     switchConnectionFailed: name => `無法連線至 ${name}`,
     manageProfiles: '管理設定檔…',
+    remoteOverride: {
+      menuItem: '連線至遠端主機…',
+      badge: (host: string) => `執行於 ${host}`,
+      title: (profile: string) => `將 ${profile} 連線至遠端主機`,
+      description: '此設定檔中的工作階段將在你指定的遠端 Hermes 上執行，而不是這台電腦。',
+      urlLabel: '遠端位址',
+      urlPlaceholder: 'https://hermes.example.com',
+      urlInvalid: '請輸入以 http:// 或 https:// 開頭的完整位址',
+      tokenLabel: '存取權杖',
+      tokenPlaceholder: '貼上遠端工作階段權杖',
+      tokenSavedHint: '已儲存權杖。留空以保留現有權杖。',
+      plainTextOptIn: '這台電腦沒有安全金鑰儲存空間，權杖將以未加密方式儲存到磁碟。仍要儲存。',
+      collisionWarning: (label: string) => `設定中已存在名為「${label}」的閘道。此設定檔連線是獨立的，不會變更它。`,
+      confirmTitle: '將此設定檔連線至遠端主機？',
+      confirmNote: (profile: string, host: string) =>
+        `${profile} 中的新對話將在 ${host} 上執行。指令執行與檔案讀取都會發生在那台電腦上，而不是這台。請只連線你信任的主機。`,
+      confirmBack: '返回',
+      connect: '連線',
+      connecting: '連線中…',
+      disconnect: '移除遠端連線',
+      savedTitle: '設定檔已連線',
+      savedMessage: (profile: string, host: string) => `${profile} 現在執行於 ${host}`,
+      removedTitle: '已移除遠端連線',
+      removedMessage: (profile: string) => `${profile} 現在在這台電腦上執行`,
+      removeFailed: '無法移除遠端連線',
+      authFailedTitle: '遠端主機拒絕了已儲存的權杖',
+      authFailedMessage: (profile: string, host: string) =>
+        `${host} 拒絕了為 ${profile} 儲存的權杖。它可能已在遠端被變更。`,
+      updateToken: '輸入新權杖…'
+    },
     actions: '動作',
     color: '顏色…',
     colorFor: '顏色',
@@ -2402,6 +2437,7 @@ export const zhHant = defineLocale({
       gateway: '閘道',
       gatewayReady: '就緒',
       gatewayNeedsSetup: '需要設定',
+      gatewayUnavailable: '推論不可用',
       gatewayChecking: '檢查中',
       gatewayConnecting: '連線中',
       gatewayOffline: '離線',
@@ -2597,6 +2633,7 @@ export const zhHant = defineLocale({
     closeToRight: '關閉右側',
     closeAll: '全部關閉',
     newSessionTab: '新增工作階段分頁',
+    newTab: '新增分頁',
     pluginDisabled: pluginId => `外掛「${pluginId}」已停用`,
     pluginDisabledBody: '在 設定 → 外掛 中重新啟用即可恢復面板。',
     missingPane: paneId => `缺少面板：${paneId}`,

@@ -1823,6 +1823,146 @@ _TOOL_MEDIA_RE = re.compile(
 )
 
 
+_COMPUTER_USE_CAPTURE_BASENAME_RE = re.compile(
+    r"^computer_use_[0-9a-f]{32}\.(?:png|jpe?g)$",
+    re.IGNORECASE,
+)
+_COMPUTER_USE_CAPTURE_SUMMARY_RE = re.compile(
+    r"\(shareable screenshot saved to "
+    r"(?P<path>(?:[A-Za-z]:[/\\]|/|\\\\)[^\r\n]*?"
+    r"computer_use_[0-9a-f]{32}\.(?:png|jpe?g))\)",
+    re.IGNORECASE,
+)
+
+
+def _computer_use_capture_basename(path: Any) -> str:
+    """Return a canonical capture basename for either path separator style."""
+    value = str(path or "").strip().strip("`\"'")
+    basename = re.split(r"[/\\]", value)[-1]
+    if _COMPUTER_USE_CAPTURE_BASENAME_RE.fullmatch(basename):
+        return basename.lower()
+    return ""
+
+
+def _iter_computer_use_capture_paths(content: Any):
+    """Yield persisted screenshot paths from computer_use result content.
+
+    The tool can return JSON, a multimodal content list, or a text fallback.
+    The latter two retain the canonical path in the human-readable summary
+    even though the multimodal envelope's ``meta`` dictionary is not stored in
+    the tool message.
+    """
+    if isinstance(content, str):
+        for match in _COMPUTER_USE_CAPTURE_SUMMARY_RE.finditer(content):
+            yield match.group("path").strip()
+        stripped = content.strip()
+        if stripped.startswith(("{", "[")):
+            try:
+                payload = json.loads(stripped)
+            except Exception:
+                payload = None
+            if isinstance(payload, (dict, list)):
+                yield from _iter_computer_use_capture_paths(payload)
+        return
+
+    if isinstance(content, list):
+        for part in content:
+            yield from _iter_computer_use_capture_paths(part)
+        return
+
+    if not isinstance(content, dict):
+        return
+
+    screenshot_path = content.get("screenshot_path")
+    if isinstance(screenshot_path, str):
+        yield screenshot_path
+    meta = content.get("meta")
+    if isinstance(meta, dict) and isinstance(meta.get("screenshot_path"), str):
+        yield meta["screenshot_path"]
+    for field in ("content", "text", "text_summary", "summary"):
+        nested = content.get(field)
+        if isinstance(nested, (str, dict, list)):
+            yield from _iter_computer_use_capture_paths(nested)
+
+
+def _repair_explicit_computer_use_media_paths(
+    response: str,
+    messages: List[Dict[str, Any]],
+    history_offset: int = 0,
+) -> str:
+    """Recover model-mangled paths for explicitly requested screenshots.
+
+    ``computer_use`` persists a bounded screenshot and gives its absolute path
+    to the model. Some models rewrite a Windows path into a POSIX-looking path
+    before emitting ``MEDIA:``, which makes the gateway reject the nonexistent
+    path. Repair only an already-explicit directive whose unique generated
+    basename matches a canonical screenshot path from this turn. This does not
+    auto-attach ordinary computer-use captures, and normal media path
+    validation still runs after the repair.
+    """
+    if "MEDIA:" not in response:
+        return response
+
+    if history_offset and len(messages) >= history_offset:
+        turn_messages = messages[history_offset:]
+    elif history_offset:
+        # Compression can invalidate the original slice boundary. Recover the
+        # current turn from its last user message; fail closed if none remains.
+        last_user = next(
+            (
+                index
+                for index in range(len(messages) - 1, -1, -1)
+                if messages[index].get("role") == "user"
+            ),
+            None,
+        )
+        turn_messages = messages[last_user:] if last_user is not None else []
+    else:
+        turn_messages = messages
+
+    tool_name_by_call_id: Dict[str, str] = {}
+    for msg in turn_messages:
+        if msg.get("role") != "assistant":
+            continue
+        for call in msg.get("tool_calls") or []:
+            call_id = call.get("id") or call.get("call_id")
+            fn = call.get("function") or {}
+            name = str(fn.get("name") or call.get("name") or "")
+            if call_id and name:
+                tool_name_by_call_id[str(call_id)] = name
+
+    canonical_by_basename: Dict[str, str] = {}
+    for msg in turn_messages:
+        if msg.get("role") not in {"tool", "function"}:
+            continue
+        call_id = str(msg.get("tool_call_id") or msg.get("call_id") or "")
+        tool_name = str(
+            msg.get("name")
+            or msg.get("tool_name")
+            or tool_name_by_call_id.get(call_id)
+            or ""
+        )
+        if tool_name != "computer_use":
+            continue
+        for path in _iter_computer_use_capture_paths(msg.get("content")):
+            basename = _computer_use_capture_basename(path)
+            if basename and re.match(r"^(?:[A-Za-z]:[/\\]|/|\\\\)", path):
+                canonical_by_basename[basename] = path
+
+    if not canonical_by_basename:
+        return response
+
+    media_files, _ = BasePlatformAdapter.extract_media(response)
+    repaired = response
+    for emitted_path, _is_voice in media_files:
+        canonical = canonical_by_basename.get(
+            _computer_use_capture_basename(emitted_path)
+        )
+        if canonical and emitted_path != canonical:
+            repaired = repaired.replace(emitted_path, canonical)
+    return repaired
+
+
 def _collect_auto_append_media_tags(
     messages: List[Dict[str, Any]],
     history_offset: int = 0,
@@ -2411,11 +2551,11 @@ if _config_path.exists():
                         os.environ[_env_var] = str(_val)
         # Compression config is read directly from config.yaml by run_agent.py
         # and auxiliary_client.py — no env var bridging needed.
-        # Auxiliary model/direct-endpoint overrides (vision, web_extract,
+        # Auxiliary model/direct-endpoint overrides (vision,
         # approval, plus any plugin-registered auxiliary tasks).
         # Each task has provider/model/base_url/api_key; bridge non-default
         # values to env vars named AUXILIARY_<KEY_UPPER>_*. The legacy
-        # hard-coded list (vision/web_extract/approval) is replaced by a
+        # hard-coded list (vision/approval) is replaced by a
         # dynamic loop so plugin-registered tasks benefit from the same
         # config→env bridging without core knowing about each one.
         _auxiliary_cfg = _cfg.get("auxiliary", {})
@@ -2423,7 +2563,7 @@ if _config_path.exists():
             # Built-in tasks that previously had explicit env-var bridging.
             # Kept here as the canonical bridged set; plugin tasks are added
             # below via the plugin auxiliary registry.
-            _aux_bridged_keys = {"vision", "web_extract", "approval"}
+            _aux_bridged_keys = {"vision", "approval"}
             try:
                 from hermes_cli.plugins import get_plugin_auxiliary_tasks
                 for _entry in get_plugin_auxiliary_tasks():
@@ -2750,7 +2890,7 @@ def _own_policy_open_startup_violation(config) -> Optional[str]:
         ).strip().lower()
         if dm_policy != "open" and group_policy != "open":
             continue
-        gateway_allow_all = os.getenv(
+        gateway_allow_all = _getenv(
             "GATEWAY_ALLOW_ALL_USERS", ""
         ).lower() in {"true", "1", "yes"}
         platform_opted_in = gateway_allow_all or (
@@ -6429,6 +6569,20 @@ class TurnRunner:
             except Exception:
                 pass
             reset_current_session_key(_approval_session_token)
+        # Canonicalize an explicitly emitted computer-use screenshot path at
+        # the common result boundary. The streaming finalizer below and the
+        # normal non-streaming delivery path must see the same response;
+        # repairing only during later media scanning leaves streaming with the
+        # model-mangled path and a rejected attachment.
+        if isinstance(result, dict):
+            _result_final = result.get("final_response")
+            if isinstance(_result_final, str):
+                result["final_response"] = _repair_explicit_computer_use_media_paths(
+                    _result_final,
+                    result.get("messages", []),
+                    history_offset=len(agent_history),
+                )
+
         ctx.result_holder[0] = result
 
         # Signal the stream consumer that the agent is done. Pass the
@@ -7146,6 +7300,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         self._session_db_pinned: Any = _SESSION_DB_UNPINNED
         self._session_db_handles: Dict[Path, Any] = {}
         self._session_db_handles_lock = threading.Lock()
+        from gateway.session_db_recovery import RecoverableHandleCache
+
+        self._session_db_handle_cache = RecoverableHandleCache(
+            handles=self._session_db_handles,
+            lock=self._session_db_handles_lock,
+        )
         try:
             self._open_session_db_for_active_scope(raise_on_error=True)
         except Exception as e:
@@ -7271,29 +7431,46 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         search on a multiplexed gateway read the *serving profile's* store
         rather than the root one.
 
-        One ``AsyncSessionDB`` is cached per resolved path under a lock, so
+        One ``AsyncSessionDB`` is cached per resolved path, so
         the wrapper identity is stable per profile (callers compare and stash
-        it) and two profiles never share a handle.  A construction failure is
-        cached as ``None`` for that path so a broken store degrades once, not
-        per command; ``raise_on_error=True`` (construction-time priming)
-        propagates the failure instead so ``__init__`` can record
-        ``_session_db_init_error`` for the #88235 broadcast.
+        it) and two profiles never share a handle. A construction failure
+        enters bounded backoff; one caller retries after the deadline while
+        concurrent callers continue to see the unavailable fallback.
+        ``raise_on_error=True`` (construction-time priming) propagates the
+        failure after recording that recoverable state so ``__init__`` can
+        record ``_session_db_init_error`` for the #88235 broadcast.
         """
         from hermes_state import AsyncSessionDB, SessionDB, _default_db_path
+        from gateway.session_db_recovery import RecoverableHandleCache
 
         path = Path(_default_db_path())
-        with self._session_db_handles_lock:
-            if path in self._session_db_handles:
-                return self._session_db_handles[path]
-            db = None
+        cache = getattr(self, "_session_db_handle_cache", None)
+        if cache is None:
+            # Compatibility for lightweight test runners built with
+            # object.__new__ rather than GatewayRunner.__init__.
+            cache = RecoverableHandleCache(
+                handles=self._session_db_handles,
+                lock=self._session_db_handles_lock,
+            )
+            self._session_db_handle_cache = cache
+
+        def _open():
             try:
-                db = AsyncSessionDB(SessionDB())
-            except Exception as e:
-                if raise_on_error:
-                    raise
-                logger.warning("SQLite session store not available: %s", e)
-            self._session_db_handles[path] = db
-            return db
+                return AsyncSessionDB(SessionDB())
+            except Exception as exc:
+                logger.warning("SQLite session store not available: %s", exc)
+                raise
+
+        def _recovered() -> None:
+            self._session_db_init_error = None
+            logger.info("SQLite session store recovered")
+
+        return cache.get(
+            path,
+            _open,
+            raise_on_error=raise_on_error,
+            on_recovered=_recovered,
+        )
 
     @property
     def _session_db(self) -> Any:
@@ -7320,17 +7497,16 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         ``SessionStore.close_all_db_handles``.  Handles are drained under the
         lock and closed outside it; a pinned handle is the pinner's to close.
         """
-        with self._session_db_handles_lock:
-            handles = [db for db in self._session_db_handles.values() if db is not None]
-            self._session_db_handles.clear()
-        for db in handles:
+        def _close(db) -> None:
             inner = getattr(db, "_db", db)
             if inner is None or not hasattr(inner, "close"):
-                continue
+                return
             try:
                 inner.close()
             except Exception as exc:
                 logger.debug("SessionDB close error during handle sweep: %s", exc)
+
+        self._session_db_handle_cache.close_all(_close)
 
     def _wire_teams_pipeline_runtime(self) -> None:
         """Bind the Teams meeting pipeline runtime to Graph webhook ingress.
@@ -17867,6 +18043,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             return await self._handle_heartbeat_command(event)
         if canonical == "refine":
             return await self._handle_refine_command(event)
+        if canonical == "review":
+            return await self._handle_review_command(event)
 
         if canonical == "moa":
             # /moa is one-shot sugar only: run a single prompt through the
@@ -24562,7 +24740,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 "2. Salvage with: sqlite3 ~/.hermes/state.db \".recover\" "
                 "(then replace state.db)\n"
                 "3. Restore from a backup in ~/.hermes/backups/\n"
-                f"Error: {error}"
+                "Run `hermes doctor` for sanitized diagnostics."
             )
         else:
             message = (
@@ -30196,6 +30374,8 @@ def _start_gateway_housekeeping(stop_event: threading.Event, adapters=None, loop
         cleanup_video_cache,
     )
     from tools.tool_result_storage import cleanup_spillover_cache
+    from tools.bot_mode_dm import cleanup_bot_dm_cache
+    from tools.bot_relay import cleanup_bot_relay_artifacts
     from hermes_cli.debug import _sweep_expired_pastes
 
     IMAGE_CACHE_EVERY = 60   # ticks — once per hour at default 60s interval
@@ -30215,6 +30395,8 @@ def _start_gateway_housekeeping(stop_event: threading.Event, adapters=None, loop
         ("Video", cleanup_video_cache),
         ("Screenshot", cleanup_screenshot_cache),
         ("Spillover", cleanup_spillover_cache),
+        ("Bot DM", cleanup_bot_dm_cache),
+        ("Bot relay", cleanup_bot_relay_artifacts),
     )
 
     logger.info("Gateway housekeeping started (interval=%ds)", interval)
@@ -30447,6 +30629,190 @@ def _gateway_stderr_formatter() -> logging.Formatter:
     return RedactingFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
+  # ownership guard inserted below (PR #93084)
+def _replace_target_belongs_to_other_profile(existing_pid: int) -> bool:
+    """Return True when ``--replace`` must refuse to signal ``existing_pid``.
+
+    The PID file is HERMES_HOME-scoped, but a poisoned/stale record can point
+    at another profile's LIVE gateway; signaling it starts the cross-profile
+    SIGTERM restart loop this guard exists to prevent (#89315). This is a
+    destructive-action authority check, so ownership is decided by the
+    persisted identity record ALONE — exact ``_same_hermes_home`` equality —
+    and only while that record stays bound to the live target by exact PID +
+    start-time identity:
+
+    * The authorizing record is whichever source produced the PID for this
+      destructive decision (PID file, gateway lock record, or runtime-status
+      fallback). A readable live argv carries no HERMES_HOME (it travels in
+      the environment), so it can never prove home ownership; it is used only
+      as an additional CONSISTENCY check — token-exact profile flags that
+      clearly contradict our home refuse the signal even when the record
+      agrees.
+    * Missing, legacy, conflicting, stale-bound, or unprovable identity →
+      refuse (fail closed).
+
+    Same-home targets keep replacing normally; every refusal path here only
+    narrows what the legacy start_time check alone used to allow.
+    """
+    try:
+        from gateway.status import (
+            _get_pid_path,
+            _get_process_hermes_home,
+            _get_process_start_time,
+            _pid_from_record,
+            _read_pid_record,
+            _record_looks_like_gateway,
+            _read_process_cmdline,
+            _same_hermes_home,
+        )
+
+        our_home = _get_process_hermes_home()
+
+        # ── Authorize from the persisted identity record ──────────────
+        # Bound claim: the record must describe THIS pid with THIS live
+        # start time, otherwise it is stale/poisoned and proves nothing.
+        record = _read_pid_record(_get_pid_path())
+        if not isinstance(record, dict) or not _record_looks_like_gateway(record):
+            logger.warning(
+                "Refusing --replace: no valid gateway pid record to prove "
+                "ownership of PID %s.",
+                existing_pid,
+            )
+            return True
+
+        record_pid = _pid_from_record(record)
+        if record_pid != existing_pid:
+            logger.warning(
+                "Refusing --replace: pid record names %s, not target %s.",
+                record_pid, existing_pid,
+            )
+            return True
+
+        recorded_start = record.get("start_time")
+        if not isinstance(recorded_start, int) or isinstance(recorded_start, bool):
+            return True
+        if _get_process_start_time(existing_pid) != recorded_start:
+            logger.warning(
+                "Refusing --replace: pid record start-time does not match "
+                "the live process %s (stale/PID-reuse record).",
+                existing_pid,
+            )
+            return True
+
+        recorded_home = record.get("hermes_home")
+        if not isinstance(recorded_home, str) or not recorded_home.strip():
+            # Legacy record without hermes_home cannot prove ownership.
+            logger.warning(
+                "Refusing --replace: pid record predates hermes_home "
+                "stampings; ownership of PID %s unprovable.",
+                existing_pid,
+            )
+            return True
+
+        if not _same_hermes_home(recorded_home, our_home):
+            logger.error(
+                "Refusing --replace: pid record belongs to a different "
+                "HERMES_HOME (%s, ours %s). Remove the stale PID record or "
+                "stop the owning profile explicitly.",
+                recorded_home,
+                our_home,
+            )
+            return True
+
+        # ── Readable-argv consistency check (never authority) ─────────
+        # An explicit profile flag / HERMES_HOME= on the argv that clearly
+        # contradicts our home refuses even though the record agreed; a bare
+        # or matching argv adds nothing either way.
+        try:
+            live_cmdline = _read_process_cmdline(existing_pid)
+        except Exception:
+            live_cmdline = None  # consistency probe failure → record decides
+        if live_cmdline and _looks_like_profile_conflict_from_cmdline(
+            live_cmdline, our_home
+        ):
+            logger.error(
+                "Refusing --replace: target PID %s command line explicitly "
+                "advertises a different profile than HERMES_HOME %s.",
+                existing_pid,
+                our_home,
+            )
+            return True
+
+        return False
+    except Exception:
+        # Destructive action + unknown ownership => fail closed (#89315).
+        logger.warning(
+            "cross-profile --replace ownership probe failed for PID %s; "
+            "refusing to signal",
+            existing_pid,
+            exc_info=True,
+        )
+        return True
+
+
+def _looks_like_profile_conflict_from_cmdline(command: str, our_home) -> bool:
+    """Token-exact contradiction check between a target argv and our home.
+
+    Authority lives in the pid record; this only catches argv that EXPLICITLY
+    advertises a different profile than ours. Substring matching is not
+    identity: ``--profile timothy`` must NOT read as profile ``tim``. Returns
+    False whenever the argv does not clearly contradict our home.
+    """
+    from gateway.status import _profile_name_for_home
+
+    profile_name = _profile_name_for_home(our_home)
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+
+    def _flag_value(flag: str) -> Optional[str]:
+        """Value of ``--flag X`` / ``--flag=X`` occurrences, token-exact."""
+        values = []
+        i = 0
+        while i < len(tokens):
+            tok = tokens[i]
+            if tok == flag and i + 1 < len(tokens):
+                values.append(tokens[i + 1])
+                i += 2
+                continue
+            if tok.startswith(flag + "="):
+                values.append(tok[len(flag) + 1:])
+            i += 1
+        return values[-1] if values else None
+
+    def _env_home_value() -> Optional[str]:
+        """HERMES_HOME=<path> env-style assignment on the argv, token-exact."""
+        prefix = "HERMES_HOME="
+        for tok in reversed(tokens):
+            if tok.startswith(prefix):
+                return tok[len(prefix):]
+        return None
+
+    if profile_name is not None and profile_name != "default":
+        # Our home is a named profile: any explicit DIFFERENT named profile
+        # on the argv contradicts it. Bare argv stays consistent (legacy
+        # default-gateway argv never carried profile flags).
+        for flag in ("--profile", "-p"):
+            value = _flag_value(flag)
+            if value is not None and value != profile_name:
+                return True
+        home_value = _flag_value("--hermes-home") or _env_home_value()
+        if home_value is not None and os.path.normcase(os.path.normpath(home_value)) != os.path.normcase(os.path.normpath(str(our_home))):
+            return True
+        return False
+
+    # Our home is the default/root: ANY explicit named-profile flag on the
+    # argv contradicts it.
+    if _flag_value("--profile") is not None or _flag_value("-p") is not None:
+        return True
+    home_value = _flag_value("--hermes-home") or _env_home_value()
+    if home_value is not None and os.path.normcase(os.path.normpath(home_value)) != os.path.normcase(os.path.normpath(str(our_home))):
+        return True
+    return False
+
+
+
 async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = False, verbosity: Optional[int] = 0) -> bool:
     """
     Start the gateway and run until interrupted.
@@ -30493,6 +30859,21 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     existing_pid = get_running_pid()
     if existing_pid is not None and existing_pid != os.getpid():
         if replace:
+            # Cross-profile ownership gate (#89315): never signal a live
+            # process we cannot prove belongs to this HERMES_HOME. A poisoned
+            # PID record steering --replace at another profile's gateway is
+            # exactly the restart-loop shape this flow must not allow.
+            if _replace_target_belongs_to_other_profile(existing_pid):
+                from gateway.status import _get_process_hermes_home
+
+                logger.error(
+                    "Refusing --replace: PID %d cannot be proven to belong "
+                    "to this profile's gateway (HERMES_HOME %s). Remove the "
+                    "stale PID record or stop the owning profile explicitly.",
+                    existing_pid,
+                    _get_process_hermes_home(),
+                )
+                return False
             existing_start_time = get_process_start_time(existing_pid)
             logger.info(
                 "Replacing existing gateway instance (PID %d) with --replace.",
@@ -30878,6 +31259,26 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     atexit.register(remove_pid_file)
     atexit.register(release_gateway_runtime_lock)
 
+    # Control socket (#92091 step 1) — the gateway-owned identify/status
+    # surface. Started immediately after the PID-file claim: winning that
+    # O_EXCL race is the moment this process becomes the authoritative
+    # gateway for its HERMES_HOME, so from here on "does a socket answer?"
+    # is a truthful liveness/identity query for updater and fleet consumers.
+    # Strictly non-fatal: a bind failure only means consumers fall back to
+    # the process-scan/state-file layer, exactly as before this feature.
+    _control_server = None
+    try:
+        from gateway.control_socket import GatewayControlServer
+
+        _control_server = GatewayControlServer()
+        if not await _control_server.start():
+            _control_server = None
+        else:
+            atexit.register(_control_server.cleanup_files)
+    except Exception as _cs_exc:
+        logger.debug("Control socket startup failed (non-fatal): %s", _cs_exc)
+        _control_server = None
+
     # Lifecycle ledger (NS-608): report if the previous gateway life died
     # uncleanly (SIGKILL / OOM / VM death — no exit path ran), then claim
     # the sentinel for this life. Placed after the PID-file/lock claim so
@@ -31074,6 +31475,17 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
 
     # Wait for shutdown
     await runner.wait_for_shutdown()
+
+    # Stop the control socket first: once shutdown begins this process is no
+    # longer a truthful "the gateway is serving here" answer, and a successor
+    # (--replace / supervisor respawn) must be able to bind. Early-exit paths
+    # above don't reach this; their process exit runs the atexit
+    # cleanup_files hook, and a successor clears any stale socket on bind.
+    if _control_server is not None:
+        try:
+            await _control_server.stop()
+        except Exception:
+            logger.debug("Control socket stop failed (non-fatal)", exc_info=True)
 
     try:
         from hermes_cli.nous_auth_keepalive import stop_nous_auth_keepalive

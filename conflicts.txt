@@ -1,0 +1,2 @@
+apps/desktop/electron/backend-ready.ts
+apps/desktop/src/lib/desktop-slash-commands.ts
