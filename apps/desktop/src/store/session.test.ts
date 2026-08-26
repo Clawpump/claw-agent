@@ -15,6 +15,7 @@ vi.mock('@/hermes', () => ({
   setSessionUnreadRemote: (id: string, unread: boolean, profile?: null | string) => setUnreadRemote(id, unread, profile)
 }))
 
+import { deferred } from '../test/deferred'
 import { makeSessionInfo } from '../test/session-info'
 
 import {
@@ -27,8 +28,13 @@ import {
   _resetLegacyDiscardForTests,
   applyConfiguredDefaultProjectDir,
   commitWorkspaceCwdForSelectedSession,
+  ensureDefaultWorkspaceCwd,
+  getConfiguredDefaultProjectDir,
   getRememberedRoute,
   getRememberedSessionId,
+  getSessionOwnerHint,
+  knownSessionOwner,
+  knownSessionProfile,
   mergeSessionPage,
   rememberedSessionProfile,
   resolveComposerSessionKey,
@@ -39,6 +45,7 @@ import {
   setRememberedRoute,
   setRememberedSessionId,
   setSelectedStoredSessionId,
+  setSessionOwnerHint,
   setSessions,
   shouldMigrateComposerScope,
   touchSessionActivity,
@@ -52,6 +59,57 @@ import {
 } from './session-states'
 
 const session = (over: Partial<SessionInfo>): SessionInfo => makeSessionInfo({ id: 'live', ...over })
+
+describe('session owner hints', () => {
+  it('preserves the registry owner recorded on a discovered session row', () => {
+    expect(
+      knownSessionOwner(
+        [session({ connection_id: 'test-amnezia', id: 'registry-session', profile: 'default' })],
+        'registry-session'
+      )
+    ).toEqual({ connectionId: 'test-amnezia', profile: 'default' })
+  })
+
+  it('preserves the exact registry owner for session-scoped RPC routing', () => {
+    const route = {
+      connectionId: 'test-amnezia',
+      mode: 'remote' as const,
+      profile: 'default',
+      targetProfile: 'default'
+    }
+
+    setSessionOwnerHint('remote-session', route)
+
+    expect(knownSessionOwner([session({ id: 'remote-session', profile: 'default' })], 'remote-session')).toEqual(route)
+  })
+
+  it('keeps identical session ids separate across connection and profile owners', () => {
+    const sourceA = { connectionId: 'source-a', mode: 'remote' as const, profile: 'worker', targetProfile: 'backend-a' }
+    const sourceB = { connectionId: 'source-b', mode: 'remote' as const, profile: 'worker', targetProfile: 'backend-b' }
+
+    setSessionOwnerHint('same-session', sourceA)
+    setSessionOwnerHint('same-session', sourceB)
+
+    expect(getSessionOwnerHint('same-session', sourceA)).toEqual(sourceA)
+    expect(getSessionOwnerHint('same-session', sourceB)).toEqual(sourceB)
+    expect(getSessionOwnerHint('same-session')).toBeUndefined()
+  })
+
+  it('bounds owner hints and evicts the oldest scoped identity', () => {
+    for (let index = 0; index < 257; index += 1) {
+      setSessionOwnerHint(`bounded-${index}`, {
+        connectionId: 'bounded-source',
+        mode: 'remote',
+        profile: 'worker',
+        targetProfile: 'backend-worker'
+      })
+    }
+
+    const scope = { connectionId: 'bounded-source', profile: 'worker' }
+    expect(getSessionOwnerHint('bounded-0', scope)).toBeUndefined()
+    expect(getSessionOwnerHint('bounded-256', scope)).toMatchObject({ connectionId: 'bounded-source' })
+  })
+})
 
 describe('computed $attentionSessionIds', () => {
   beforeEach(() => {
@@ -389,6 +447,57 @@ describe('workspaceCwdForNewSession', () => {
     window.localStorage.removeItem('hermes.desktop.workspace-cwd')
     window.localStorage.removeItem('hermes.desktop.workspace-cwd.remote.http%3A%2F%2Fbackend-a.default')
     window.localStorage.removeItem('hermes.desktop.workspace-cwd.remote.http%3A%2F%2Fbackend-b.default')
+    delete (window as { hermesDesktop?: unknown }).hermesDesktop
+  })
+
+  it('does not publish a delayed configured default after ownership is lost', async () => {
+    const settingsResult = deferred<{
+      defaultLabel: string
+      dir: string
+      resolvedCwd: string
+    }>()
+
+    const sanitizeWorkspaceCwd = vi.fn(async (cwd: string) => ({ cwd }))
+
+    ;(window as { hermesDesktop?: unknown }).hermesDesktop = {
+      sanitizeWorkspaceCwd,
+      settings: { getDefaultProjectDir: vi.fn(() => settingsResult.promise) }
+    }
+    applyConfiguredDefaultProjectDir('/newer/default')
+    let ownsSwitch = true
+
+    const seeding = ensureDefaultWorkspaceCwd(() => ownsSwitch)
+    ownsSwitch = false
+    settingsResult.resolve({ defaultLabel: '/stale', dir: '/stale/default', resolvedCwd: '/stale/default' })
+    await seeding
+
+    expect(getConfiguredDefaultProjectDir()).toBe('/newer/default')
+    expect($currentCwd.get()).toBe('')
+    expect(sanitizeWorkspaceCwd).not.toHaveBeenCalled()
+  })
+
+  it('does not publish a delayed sanitized cwd after ownership is lost', async () => {
+    const sanitized = deferred<{ cwd: string }>()
+
+    ;(window as { hermesDesktop?: unknown }).hermesDesktop = {
+      sanitizeWorkspaceCwd: vi.fn(() => sanitized.promise),
+      settings: {
+        getDefaultProjectDir: vi.fn(async () => ({
+          defaultLabel: '/configured',
+          dir: '/configured',
+          resolvedCwd: '/configured'
+        }))
+      }
+    }
+    let ownsSwitch = true
+
+    const seeding = ensureDefaultWorkspaceCwd(() => ownsSwitch)
+    await vi.waitFor(() => expect(getConfiguredDefaultProjectDir()).toBe('/configured'))
+    ownsSwitch = false
+    sanitized.resolve({ cwd: '/stale/sanitized' })
+    await seeding
+
+    expect($currentCwd.get()).toBe('')
   })
 
   it('prefers the configured default over the sticky remembered workspace', () => {
@@ -887,8 +996,74 @@ describe('rememberedSessionProfile', () => {
     expect(rememberedSessionProfile([], 'uncached', 'research')).toBe('research')
   })
 
+  it('consults the owner hint for a hidden session absent from the list (Bot Chat 4001 class)', () => {
+    // Bot Mode's canonical chats are born hidden: no sidebar row ever exists,
+    // so without the hint the router would fall back to the ACTIVE profile and
+    // land prompt.submit on a backend that never owned the session.
+    setSessionOwnerHint('hidden-bot-chat', { connectionId: 'local', mode: 'local', profile: 'developer' })
+
+    expect(rememberedSessionProfile([], 'hidden-bot-chat', 'default')).toBe('developer')
+  })
+
+  it('prefers the routed targetProfile over the route profile in the hint fallback', () => {
+    setSessionOwnerHint('hidden-remote-chat', {
+      connectionId: 'ssh-1',
+      profile: 'default',
+      targetProfile: 'clippy'
+    })
+
+    expect(rememberedSessionProfile([], 'hidden-remote-chat', 'default')).toBe('clippy')
+  })
+
+  it('still prefers a real session row over the hint', () => {
+    setSessionOwnerHint('rowed-session', { connectionId: 'local', profile: 'wrong-hint' })
+    const sessions = [session({ id: 'rowed-session', profile: 'right-owner' })]
+
+    expect(rememberedSessionProfile(sessions, 'rowed-session', 'default')).toBe('right-owner')
+  })
+
   it('normalizes a blank active profile to default', () => {
     expect(rememberedSessionProfile([], null, '')).toBe('default')
     expect(rememberedSessionProfile([], null, null)).toBe('default')
+  })
+})
+
+describe('knownSessionProfile', () => {
+  it('returns the row owner when the session is listed', () => {
+    const sessions = [session({ id: 'stored-1', profile: 'ai-engineer' })]
+
+    expect(knownSessionProfile(sessions, 'stored-1')).toBe('ai-engineer')
+  })
+
+  it('returns the owner hint for a hidden session absent from the list', () => {
+    setSessionOwnerHint('hidden-bot-chat', { connectionId: 'local', mode: 'local', profile: 'developer' })
+
+    expect(knownSessionProfile([], 'hidden-bot-chat')).toBe('developer')
+  })
+
+  it('returns undefined for an unknown session — NEVER falls back to active', () => {
+    // This is the whole point of the no-active-fallback architecture: an
+    // unresolved owner must be undefined so the caller does a cross-profile
+    // probe, not silently route the RPC to whatever profile is on screen.
+    expect(knownSessionProfile([], 'totally-unknown')).toBeUndefined()
+    expect(knownSessionProfile([], null)).toBeUndefined()
+  })
+})
+
+describe('knownSessionOwner', () => {
+  it('preserves a registry connection on a same-named session row', () => {
+    expect(
+      knownSessionOwner(
+        [session({ connection_id: 'source-b', id: 'shared-session', profile: 'default' })],
+        'shared-session'
+      )
+    ).toEqual({ connectionId: 'source-b', profile: 'default' })
+  })
+
+  it('preserves a composite owner hint when the row is not listed', () => {
+    const owner = { connectionId: 'source-a', profile: 'default', targetProfile: 'backend-default' }
+    setSessionOwnerHint('hidden-session', owner)
+
+    expect(knownSessionOwner([], 'hidden-session')).toEqual(owner)
   })
 })

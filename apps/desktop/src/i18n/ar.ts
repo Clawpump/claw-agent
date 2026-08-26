@@ -96,6 +96,8 @@ export const ar = defineLocale({
       backendStopped: 'توقف الخلفية',
       desktopBootFailed: 'فشل تشغيل سطح المكتب',
       gatewayConnectionLost: 'انقطع الاتصال بالبوابة',
+      gatewayConnectionLostDetail:
+        'Still retrying in the background. You can keep reading and drafting — open Gateway settings if this persists.',
       gatewaySignInRequired: 'تسجيل الدخول للبوابة مطلوب',
       ipcBridgeUnavailable: 'جسر IPC لسطح المكتب غير متاح.'
     },
@@ -216,6 +218,7 @@ export const ar = defineLocale({
     openStarmap: 'فتح خريطة الذاكرة',
     enterHud: 'وضع HUD',
     exitHud: 'إنهاء وضع HUD',
+    resetHudLayout: 'إعادة تعيين حجم HUD وموضعه',
     layoutEditor: 'محرر التخطيط',
     layoutEditorTitle: modifier => `محرر التخطيط — انقر مع ${modifier} لإعادة ضبط التخطيط`
   },
@@ -276,7 +279,7 @@ export const ar = defineLocale({
       'view.showTerminal': 'إظهار الطرفية',
       'view.closeTab': 'إغلاق علامة التبويب',
       'view.reopenTab': 'إعادة فتح علامة التبويب المغلقة',
-      'view.terminalSelection': 'إرسال تحديد الطرفية إلى المحرّر',
+      'view.selectionToComposer': 'إرسال التحديد إلى المحرّر',
       'view.terminalCopy': 'نسخ تحديد الطرفية',
       'view.terminalPaste': 'لصق في الطرفية',
       'view.closePreviewTab': 'إغلاق علامة تبويب المعاينة',
@@ -468,6 +471,8 @@ export const ar = defineLocale({
       reactionsDesc: 'تفاعلات إيموجي بأسلوب iMessage — تفاعل مع الرسائل، ويمكن لـ Hermes التفاعل مع رسائلك.',
       composerPopoutTitle: 'محرر عائم',
       composerPopoutDesc: 'السماح بسحب محرر الرسائل خارج موضعه. عطّل هذا الخيار لإبقائه مثبتًا في الأسفل.',
+      vibeHeartsTitle: 'قلوب المزاج',
+      vibeHeartsDesc: 'قلوب عائمة عند قول شكراً أو أحبك أو good bot أو إرسال قلب. منفصلة عن تفاعلات الرسائل أعلاه.',
       embedsTitle: 'التضمينات المضمّنة',
       embedsDesc:
         'تُحمّل المعاينات الغنية من مواقع طرف ثالث (YouTube، X، …). "اسأل" يعرض عنصرا نائبا حتى تسمح لكل واحد؛ "دائما" يحمّلها تلقائيا؛ "إيقاف" يبقي الروابط عادية.',
@@ -761,6 +766,10 @@ export const ar = defineLocale({
       existingToken: value => `رمز موجود ${value}`,
       savedToken: 'محفوظ',
       pasteSessionToken: 'ألصق رمز الجلسة',
+      keychainEncryptionTitle: 'تشفير الأسرار المحفوظة باستخدام سلسلة مفاتيح النظام',
+      keychainEncryptionDesc:
+        'معطّل افتراضياً. عند التفعيل، تُشفَّر رموز البوابة وبيانات تسجيل الدخول باستخدام سلسلة مفاتيح النظام (Keychain Access أو GNOME Keyring أو Windows DPAPI) — وقد يطلب النظام إذناً أو كلمة مرور. عند التعطيل، تُخزَّن كملفات عادية لا يقرؤها سوى حساب المستخدم الحالي.',
+      keychainEncryptionFailed: 'تعذّر تغيير إعداد تشفير الأسرار',
       testRemote: 'اختبار البعيد',
       saveForRestart: 'حفظ للتشغيل القادم',
       saveAndReconnect: 'حفظ وإعادة الاتصال',
@@ -861,10 +870,6 @@ export const ar = defineLocale({
           label: 'الرؤية',
           hint: 'تحليل الصور'
         },
-        web_extract: {
-          label: 'استخراج الويب',
-          hint: 'تلخيص الصفحات'
-        },
         compression: {
           label: 'الضغط',
           hint: 'ضغط السياق'
@@ -884,6 +889,10 @@ export const ar = defineLocale({
         title_generation: {
           label: 'توليد العناوين',
           hint: 'عناوين الجلسات'
+        },
+        review: {
+          label: 'المراجعة',
+          hint: 'وكيل المراجعة الفرعي /review'
         },
         curator: {
           label: 'المنسّق',
@@ -1390,6 +1399,38 @@ export const ar = defineLocale({
     switchToConnection: name => `التبديل إلى ${name}`,
     switchConnectionFailed: name => `تعذّر الاتصال بـ ${name}`,
     manageProfiles: 'إدارة الملفات الشخصية',
+    remoteOverride: {
+      menuItem: 'الاتصال بمضيف بعيد…',
+      badge: (host: string) => `يعمل على ${host}`,
+      title: (profile: string) => `ربط ${profile} بمضيف بعيد`,
+      description: 'ستعمل جلسات هذا الملف الشخصي على خادم Hermes البعيد الذي تحدده، بدلاً من هذا الجهاز.',
+      urlLabel: 'العنوان البعيد',
+      urlPlaceholder: 'https://hermes.example.com',
+      urlInvalid: 'أدخل عنواناً كاملاً يبدأ بـ http:// أو https://',
+      tokenLabel: 'رمز الوصول',
+      tokenPlaceholder: 'الصق رمز الجلسة البعيد',
+      tokenSavedHint: 'يوجد رمز محفوظ بالفعل. اتركه فارغاً للاحتفاظ به.',
+      plainTextOptIn:
+        'لا يتوفر تخزين مفاتيح آمن على هذا الجهاز، لذا سيُحفظ الرمز على القرص دون تشفير. احفظه على أي حال.',
+      collisionWarning: (label: string) =>
+        `توجد بوابة باسم «${label}» في الإعدادات بالفعل. اتصال هذا الملف الشخصي منفصل ولن يغيّرها.`,
+      confirmTitle: 'ربط هذا الملف الشخصي بمضيف بعيد؟',
+      confirmNote: (profile: string, host: string) =>
+        `ستعمل المحادثات الجديدة في ${profile} على ${host}. سيقوم ذلك الجهاز بتنفيذ الأوامر وقراءة الملفات هناك، وليس هنا. اتصل فقط بمضيف تثق به.`,
+      confirmBack: 'رجوع',
+      connect: 'اتصال',
+      connecting: 'جارٍ الاتصال…',
+      disconnect: 'إزالة الاتصال البعيد',
+      savedTitle: 'تم ربط الملف الشخصي',
+      savedMessage: (profile: string, host: string) => `${profile} يعمل الآن على ${host}`,
+      removedTitle: 'تمت إزالة الاتصال البعيد',
+      removedMessage: (profile: string) => `${profile} يعمل الآن على هذا الجهاز`,
+      removeFailed: 'تعذّرت إزالة الاتصال البعيد',
+      authFailedTitle: 'رفض المضيف البعيد الرمز المحفوظ',
+      authFailedMessage: (profile: string, host: string) =>
+        `رفض ${host} الرمز المحفوظ لـ ${profile}. ربما تم تغييره على الجانب البعيد.`,
+      updateToken: 'أدخل رمزاً جديداً…'
+    },
     actions: 'إجراءات',
     color: 'اللون',
     colorFor: 'اللون',
@@ -2217,6 +2258,7 @@ export const ar = defineLocale({
       gateway: 'البوابة',
       gatewayReady: 'البوابة جاهزة',
       gatewayNeedsSetup: 'البوابة تحتاج إعدادا',
+      gatewayUnavailable: 'الاستدلال غير متاح',
       gatewayChecking: 'جار فحص البوابة',
       gatewayConnecting: 'جار اتصال البوابة',
       gatewayOffline: 'البوابة غير متصلة',
@@ -2285,6 +2327,9 @@ export const ar = defineLocale({
     hide: 'إخفاء',
     openPreview: 'فتح المعاينة',
     openInBrowser: 'فتح في المتصفح',
+    openInExternal: 'فتح في الخارج',
+    popIn: 'إدخال',
+    popOut: 'إخراج',
     linkHint: '⌘/Ctrl-نقر لجزء المعاينة',
     sourceLineTitle: 'انقر للتحديد · shift-نقر للتوسيع · اسحب إلى المُنشئ',
     source: 'المصدر',
