@@ -83,26 +83,32 @@ def load_picker_context() -> ConfigContext:
     Replaces the inline 17-LOC config-slice that ``web_server.py`` and
     ``tui_gateway/server.py`` (×2 sites) used to do.
     """
-    from hermes_cli.config import get_compatible_custom_providers, load_config
+    from hermes_cli.config import (
+        coerce_provider_id,
+        get_compatible_custom_providers,
+        load_config,
+        stringify_provider_map,
+    )
 
     cfg = load_config()
     model_cfg = cfg.get("model", {})
     if isinstance(model_cfg, dict):
-        current_model = model_cfg.get("default", model_cfg.get("name", "")) or ""
-        current_provider = model_cfg.get("provider", "") or ""
-        current_base_url = model_cfg.get("base_url", "") or ""
+        # PyYAML parses unquoted scalars as int (`provider: 2070`). Keep these
+        # as strings so picker/options paths never call `.strip()` on an int.
+        current_model = str(model_cfg.get("default", model_cfg.get("name", "")) or "")
+        current_provider = coerce_provider_id(model_cfg.get("provider", ""))
+        current_base_url = str(model_cfg.get("base_url", "") or "")
     else:
         # config.model can be a bare string in older configs.
         current_model = str(model_cfg) if model_cfg else ""
         current_provider = ""
         current_base_url = ""
-    raw = cfg.get("providers")
     excluded = cfg.get("model_catalog", {}).get("excluded_providers") or []
     return ConfigContext(
         current_provider=current_provider,
         current_model=current_model,
         current_base_url=current_base_url,
-        user_providers=raw if isinstance(raw, dict) else {},
+        user_providers=stringify_provider_map(cfg.get("providers")),
         custom_providers=get_compatible_custom_providers(cfg),
         excluded_providers=excluded if isinstance(excluded, list) else [],
     )
@@ -661,6 +667,53 @@ def _append_unconfigured_rows(
     return extras
 
 
+def _anthropic_oauth_credentials_present() -> bool:
+    """True when the user explicitly authenticated Anthropic via OAuth.
+
+    Two deliberate flows leave no trace in active_provider /
+    model.provider / API-key env vars: Hermes' own Anthropic device flow
+    (token in auth.json) and a Claude Code login (~/.claude/.credentials.json).
+    ``list_authenticated_providers`` already accepts both readers as real
+    credentials when discovering rows; this mirrors that acceptance so the
+    desktop explicit-only filter does not silently drop a provider the user
+    deliberately signed into. Unlike ambient CLI tokens (gh -> copilot),
+    an OAuth access token only exists after an interactive login.
+    """
+    try:
+        from agent.anthropic_adapter import (
+            read_claude_code_credentials,
+            read_hermes_oauth_credentials,
+        )
+
+        hermes_creds = read_hermes_oauth_credentials() or {}
+        if hermes_creds.get("accessToken"):
+            return True
+        cc_creds = read_claude_code_credentials() or {}
+        if cc_creds.get("accessToken"):
+            return True
+    except Exception:
+        return False
+    # Pool-only OAuth entries (auth.json credential_pool.anthropic) are the
+    # canonical location for wired tokens and equally deliberate — the
+    # discovery side accepts them via pool.has_credentials(), so the filter
+    # must too or those rows are built and then silently dropped. Read-only
+    # dict access (no load_pool) so a picker open never mutates auth.json.
+    try:
+        from agent.credential_pool import AUTH_TYPE_OAUTH
+        from hermes_cli.auth import read_credential_pool
+
+        for entry in read_credential_pool("anthropic"):
+            if (
+                isinstance(entry, dict)
+                and entry.get("auth_type") == AUTH_TYPE_OAUTH
+                and str(entry.get("access_token") or "").strip()
+            ):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _filter_explicit_provider_rows(rows: list[dict], ctx: ConfigContext) -> list[dict]:
     """Keep only rows backed by explicit user configuration.
 
@@ -695,6 +748,14 @@ def _filter_explicit_provider_rows(rows: list[dict], ctx: ConfigContext) -> list
             # Keyless providers (opencode-free) require no configuration at
             # all — there is nothing to "explicitly configure", and hiding
             # them would defeat their purpose (zero-setup discoverability).
+            kept.append(row)
+            continue
+        if slug == "anthropic" and _anthropic_oauth_credentials_present():
+            # Anthropic OAuth logins (Hermes device flow / Claude Code) are
+            # deliberate sign-ins that leave no trace in active_provider,
+            # model.provider, or API-key env vars. The strict gate below
+            # would drop the row even though list_authenticated_providers
+            # just accepted those same credentials when building it.
             kept.append(row)
             continue
         if is_provider_explicitly_configured(slug):

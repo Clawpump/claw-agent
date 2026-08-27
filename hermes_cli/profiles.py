@@ -387,6 +387,38 @@ def profile_exists(name: str) -> bool:
     return get_profile_dir(canon).is_dir()
 
 
+def profile_matches_home(name: str, home: "Path | None" = None) -> bool:
+    """Return True when *name* refers to the profile served from *home*.
+
+    ``home`` defaults to the process's current Hermes home
+    (:func:`hermes_constants.get_hermes_home`).  Used by single-profile
+    gateways to decide whether a ``/p/<profile>/`` URL prefix is
+    self-referential (safe to serve on the bare route) or names a *different*
+    profile — in which case the request must fail closed rather than silently
+    resolve config/toolsets from the gateway owner (#91583 defect 2).
+
+    Invalid profile names return False (fail closed).
+    """
+    try:
+        target = get_profile_dir(name)
+    except Exception:
+        return False
+    if home is None:
+        try:
+            from hermes_constants import get_hermes_home
+
+            home = get_hermes_home()
+        except Exception:
+            return False
+    try:
+        return (
+            Path(target).expanduser().resolve(strict=False)
+            == Path(home).expanduser().resolve(strict=False)
+        )
+    except Exception:
+        return False
+
+
 def list_profile_names() -> List[str]:
     """Cheap name-only profile listing: ``default`` plus profile dirs.
 
@@ -1292,16 +1324,10 @@ def seed_profile_skills(profile_dir: Path, quiet: bool = False) -> Optional[dict
 
     Profiles that opted out of bundled skills (via ``hermes profile create
     --no-skills`` — which writes ``.no-bundled-skills`` to the profile root)
-    are skipped and get an empty-result dict so callers can report
-    "opted out" instead of "failed".
+    still run the sync: ``sync_skills()`` detects the marker itself and seeds
+    only the essential skills (e.g. ``hermes-agent``), reporting
+    ``skipped_opt_out`` so callers can say "opted out" instead of "failed".
     """
-    if has_bundled_skills_opt_out(profile_dir):
-        return {
-            "copied": [],
-            "updated": [],
-            "user_modified": [],
-            "skipped_opt_out": True,
-        }
     project_root = Path(__file__).parent.parent.resolve()
     try:
         result = subprocess.run(
