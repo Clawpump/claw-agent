@@ -6934,6 +6934,8 @@ def _desktop_packaged_executable(desktop_dir: Path) -> Optional[Path]:
         ]
     else:
         candidates = [
+            release_dir / "linux-unpacked" / "Claw Agent",
+            release_dir / "linux-arm64-unpacked" / "Claw Agent",
             release_dir / "linux-unpacked" / "claw-agent",
             release_dir / "linux-arm64-unpacked" / "claw-agent",
             release_dir / "linux-unpacked" / "hermes",
