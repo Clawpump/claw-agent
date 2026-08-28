@@ -1,0 +1,9 @@
+apps/desktop/electron/backend-ready.ts
+apps/desktop/package.json
+apps/desktop/src/app/settings/constants.ts
+apps/desktop/src/i18n/en.ts
+apps/desktop/src/i18n/ja.ts
+apps/desktop/src/i18n/zh-hant.ts
+apps/desktop/src/i18n/zh.ts
+apps/desktop/src/lib/desktop-slash-commands.ts
+hermes_cli/main.py
