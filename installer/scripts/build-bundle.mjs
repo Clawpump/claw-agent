@@ -29,12 +29,18 @@ const EXCLUDE_TOP = new Set([
   ".plans", "plans", "infographic", "datagen-config-examples",
   "dist", "build",
 ]);
+// Generated artifacts nested below otherwise-required source directories.
+// In particular, a local desktop build can contain app bundles and DMGs that
+// must never be copied into the npm package.
+const EXCLUDE_PATHS = new Set(["apps/desktop/release"]);
 // Path segments excluded at any depth.
 const EXCLUDE_ANY = new Set(["__pycache__", ".pytest_cache", "node_modules", ".venv", ".DS_Store"]);
 
 function keep(rel, name) {
   const parts = rel.split(path.sep);
+  const normalizedRel = parts.join("/");
   if (parts.length === 1 && EXCLUDE_TOP.has(name)) return false;
+  if (EXCLUDE_PATHS.has(normalizedRel)) return false;
   if (EXCLUDE_ANY.has(name)) return false;
   if (name.endsWith(".pyc")) return false;
   if (parts.length === 1 && /^RELEASE_v.*\.md$/.test(name)) return false;
