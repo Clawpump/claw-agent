@@ -88,11 +88,7 @@ function waitForDashboardPort(child, timeoutMs = resolvePortAnnounceTimeoutMs(),
 
     function onExit(code, signal) {
       cleanup()
-<<<<<<< HEAD
-      reject(new Error(`Claw Agent backend: exited before port announcement (${signal || code})`))
-=======
-      reject(new Error(`Hermes backend: exited before port announcement (${signal || code})${describeOutputTail()}`))
->>>>>>> upstream/main
+      reject(new Error(`Claw Agent backend: exited before port announcement (${signal || code})${describeOutputTail()}`))
     }
 
     function onError(err) {
@@ -163,11 +159,7 @@ function waitForDashboardReadyFile(
 
     function onExit(code, signal) {
       cleanup()
-<<<<<<< HEAD
-      reject(new Error(`Claw Agent backend: exited before port announcement (${signal || code})`))
-=======
-      reject(new Error(`Hermes backend: exited before port announcement (${signal || code})${describeOutputTail()}`))
->>>>>>> upstream/main
+      reject(new Error(`Claw Agent backend: exited before port announcement (${signal || code})${describeOutputTail()}`))
     }
 
     function onError(err) {

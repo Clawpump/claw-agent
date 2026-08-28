@@ -62,13 +62,8 @@ export type DesktopActionId =
 /** A command fulfilled by opening a desktop overlay picker. */
 export type DesktopPickerId = 'model' | 'session'
 
-<<<<<<< HEAD
 /** Why a known Claw Agent command has no desktop UI surface. */
-export type DesktopUnavailableReason = 'advanced' | 'messaging' | 'settings' | 'terminal'
-=======
-/** Why a known Hermes command has no desktop UI surface. */
 export type DesktopUnavailableReason = 'advanced' | 'composer-voice' | 'messaging' | 'settings' | 'terminal'
->>>>>>> upstream/main
 
 /**
  * How the desktop fulfils a command. This is the single discriminator the

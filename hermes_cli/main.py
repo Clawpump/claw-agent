@@ -10775,7 +10775,6 @@ def cmd_update(args):
         print_update_plan(collect_runtime_inventory())
         return
 
-<<<<<<< HEAD
     # The npm-bundled ClawPump distribution has no mutable git checkout. Let
     # its installer own the update before the generic install-method gates.
     try:
@@ -10785,17 +10784,6 @@ def cmd_update(args):
     if _distribution is not None and _distribution.try_self_update(PROJECT_ROOT):
         return
 
-    # Docker users can't ``git pull`` — the image excludes ``.git`` from
-    # the build context.  Bail with a friendly explanation pointing at
-    # ``docker pull`` BEFORE any of the apply-path / check-path branches
-    # below get a chance to error out with misleading "Not a git
-    # repository" text.  See format_docker_update_message() for the full
-    # rationale and tag-pinning / config-persistence notes.
-    install_method = detect_install_method(PROJECT_ROOT)
-    if install_method == "docker":
-        print(format_docker_update_message())
-        sys.exit(1)
-=======
     # Image-managed / package-managed admission gate (#91277 Phase 3): one
     # shared decision for every mutation surface. Consults the baked image
     # provenance marker first (authoritative, fail-closed on malformed),
@@ -10807,7 +10795,6 @@ def cmd_update(args):
         evaluate_update_admission,
         record_refusal_receipt,
     )
->>>>>>> upstream/main
 
     refusal = evaluate_update_admission(PROJECT_ROOT)
     if refusal is not None:
