@@ -7,8 +7,8 @@ on:
 jobs:
   check:
     name: JS & TS checks
-    # Keep one setup and run the workspace checks concurrently on the standard
-    # hosted runner available to this fork.
+    # Keep one setup and run the workspace checks on the standard hosted
+    # runner available to this fork.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -57,22 +57,15 @@ jobs:
         with:
           command: npm ci
 
-      # Every check runs at the same time. The step fails only after all of
-      # them finish. There are two reasons this is not ``npm run --ws check``.
-      #
-      #   * ``--ws`` is serial and stops at the first workspace that fails. A
-      #     run then reports one failure, where the matrix this replaced
-      #     reported every failure together.
-      #   * The unit of work is a CHECK, and not a workspace. apps/desktop is
-      #     most of the payload, and its own ``check`` is a serial && chain.
-      #     A spread across workspaces alone leaves that chain as the long
-      #     pole. This expands the ``check:*`` sub-scripts of a package, so
-      #     its lint, ui, electron and plugin suites all run together. That
-      #     is the same selection rule the old matrix job used.
+      # The unit of work is a CHECK, not a workspace. Run one at a time on the
+      # four-core runner: concurrent desktop builds/tests share output trees,
+      # and CPU-starved timer tests become flaky under the upstream 32-core
+      # schedule. The runner still records every result instead of stopping at
+      # the first failure like ``npm run --ws check``.
       #
       # Discovery is ``npm query .workspace``. A new package or a new
       # ``check:*`` script needs no change here. An empty list is an error and
       # not an empty run, because an empty run reports green after it checks
       # nothing.
       - name: Run all workspace checks
-        run: node .github/scripts/run-workspace-checks.mjs
+        run: node .github/scripts/run-workspace-checks.mjs --concurrency 1
