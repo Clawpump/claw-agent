@@ -103,12 +103,7 @@ function TransferDialog({ wallet, onClose }: { wallet: PodWallet; onClose: () =>
         <div className="flex flex-col gap-3 p-4">
           <div className="flex gap-2">
             {(['USDC', 'SOL'] as const).map(tk => (
-              <Button
-                key={tk}
-                onClick={() => setToken(tk)}
-                size="sm"
-                variant={token === tk ? 'default' : 'outline'}
-              >
+              <Button key={tk} onClick={() => setToken(tk)} size="sm" variant={token === tk ? 'default' : 'outline'}>
                 {tk}
               </Button>
             ))}

@@ -2592,7 +2592,8 @@ export const en: Translations = {
     maybeLater: 'Maybe later',
     moreChanges: count => `+ ${count} more change${count === 1 ? '' : 's'} included.`,
     manualTitle: 'Update from your terminal',
-    manualBody: 'You installed Claw Agent from the command line, so updates run there too. Paste this into your terminal:',
+    manualBody:
+      'You installed Claw Agent from the command line, so updates run there too. Paste this into your terminal:',
     manualPickedUp: 'Claw Agent will pick up the new version next time you launch it.',
     guiSkewTitle: 'Update the desktop app',
     guiSkewBody:
@@ -2666,7 +2667,8 @@ export const en: Translations = {
     installLocalDesc: 'Download Claw Agent, create its Python environment, and run the backend on this computer.',
     localStartUnavailable: 'Local installation could not start. Restart Claw Agent Desktop and try again.',
     remoteSetupTitle: 'Connect to existing Claw Agent',
-    remoteSetupDesc: 'Enter your gateway URL. Claw Agent Desktop will detect whether it needs a token or browser sign-in.',
+    remoteSetupDesc:
+      'Enter your gateway URL. Claw Agent Desktop will detect whether it needs a token or browser sign-in.',
     remoteUrlTitle: 'Gateway URL',
     remoteUrlDesc: 'Use the base URL of the Claw Agent gateway, including https:// when remote.',
     remoteUrlPlaceholder: 'https://gateway.example.com/hermes',
@@ -2742,7 +2744,8 @@ export const en: Translations = {
       xai: { short: 'Grok models', description: 'Direct access to xAI Grok models.' },
       local: {
         short: 'self-hosted',
-        description: 'Point Claw Agent at a local or self-hosted OpenAI-compatible endpoint (vLLM, llama.cpp, Ollama, etc).'
+        description:
+          'Point Claw Agent at a local or self-hosted OpenAI-compatible endpoint (vLLM, llama.cpp, Ollama, etc).'
       }
     },
     backToSignIn: 'Back to sign in',
@@ -3070,7 +3073,8 @@ export const en: Translations = {
       address: 'Address',
       addressPlaceholder: 'Enter address',
       blankPageBody: 'Type an address above to browse, or ask Claw Agent to open a page.',
-      finishedRestarting: message => `Claw Agent finished restarting the preview server${message ? `: ${message}` : ''}`,
+      finishedRestarting: message =>
+        `Claw Agent finished restarting the preview server${message ? `: ${message}` : ''}`,
       failedRestarting: message => `Server restart failed: ${message}`,
       unknownError: 'unknown error',
       restartedTitle: 'Preview server restarted',

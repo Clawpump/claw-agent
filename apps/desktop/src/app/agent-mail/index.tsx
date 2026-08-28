@@ -292,6 +292,7 @@ export function AgentMailView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
     () => parseRecipients(to).length + parseRecipients(cc).length + parseRecipients(bcc).length,
     [to, cc, bcc]
   )
+
   const selectedWallet = useMemo(() => agents.find(a => a.agent_id === agentId) ?? null, [agents, agentId])
 
   const startCompose = useCallback(() => {
@@ -453,8 +454,8 @@ export function AgentMailView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
             <div className="space-y-2 rounded-lg border border-border bg-card p-4">
               <h2 className="text-sm font-semibold">No agent wallet found</h2>
               <p className="text-sm text-muted-foreground">
-                Agent Mail needs a ClawPump agent wallet. Connect the ClawPump MCP and create an
-                agent, then reopen this tab.
+                Agent Mail needs a ClawPump agent wallet. Connect the ClawPump MCP and create an agent, then reopen this
+                tab.
               </p>
             </div>
           ) : !hasInbox ? (
@@ -463,9 +464,9 @@ export function AgentMailView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
               <h2 className="text-sm font-semibold">No inbox yet</h2>
               <p className="text-sm text-muted-foreground">
                 Give this agent a real email address (e.g.{' '}
-                <span className="font-mono text-foreground">name@agentmail.to</span>) so it can send and receive
-                mail. Provisioning is a one-time <span className="font-semibold text-foreground">~$2 USDC</span>{' '}
-                payment from the agent&apos;s own wallet over x402.
+                <span className="font-mono text-foreground">name@agentmail.to</span>) so it can send and receive mail.
+                Provisioning is a one-time <span className="font-semibold text-foreground">~$2 USDC</span> payment from
+                the agent&apos;s own wallet over x402.
               </p>
               {selectedWallet && (
                 <div className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
@@ -481,8 +482,8 @@ export function AgentMailView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
               )}
               {lowBalance && (
                 <p className="text-xs text-amber-300">
-                  Not enough USDC for the ~$2 fee — add USDC to this agent&apos;s wallet (or swap
-                  SOL&nbsp;→&nbsp;USDC) before creating the inbox.
+                  Not enough USDC for the ~$2 fee — add USDC to this agent&apos;s wallet (or swap SOL&nbsp;→&nbsp;USDC)
+                  before creating the inbox.
                 </p>
               )}
               <div className="flex flex-col gap-2 sm:flex-row">
@@ -569,9 +570,8 @@ export function AgentMailView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
               {sendArmed ? (
                 <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
                   <span className="text-sm text-amber-200">
-                    Send a real email from <span className="font-mono">{inbox?.emailAddress}</span> to{' '}
-                    {recipientCount} recipient{recipientCount === 1 ? '' : 's'}? Any per-send fee is paid in USDC
-                    from the agent wallet.
+                    Send a real email from <span className="font-mono">{inbox?.emailAddress}</span> to {recipientCount}{' '}
+                    recipient{recipientCount === 1 ? '' : 's'}? Any per-send fee is paid in USDC from the agent wallet.
                   </span>
                   <div className="ml-auto flex gap-2">
                     <Button onClick={() => setSendArmed(false)} size="sm" variant="text">
@@ -720,12 +720,8 @@ export function AgentMailView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
                             {formatDate(m.agentmailCreatedAt || m.createdAt)}
                           </span>
                         </div>
-                        <div className="mt-1 truncate text-sm text-foreground/90">
-                          {m.subject || '(no subject)'}
-                        </div>
-                        {m.preview && (
-                          <div className="mt-0.5 truncate text-xs text-muted-foreground">{m.preview}</div>
-                        )}
+                        <div className="mt-1 truncate text-sm text-foreground/90">{m.subject || '(no subject)'}</div>
+                        {m.preview && <div className="mt-0.5 truncate text-xs text-muted-foreground">{m.preview}</div>}
                       </button>
                     )
                   })}

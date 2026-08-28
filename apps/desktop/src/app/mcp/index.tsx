@@ -105,8 +105,8 @@ export function McpView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...prop
             <h1 className="text-lg font-semibold">MCP Servers</h1>
           </header>
           <p className="text-sm text-muted-foreground">
-            Model Context Protocol servers wired into your agent. The ClawPump MCP brings 133 tools —
-            wallet, trading, marketplace, perps, token launch.
+            Model Context Protocol servers wired into your agent. The ClawPump MCP brings 133 tools — wallet, trading,
+            marketplace, perps, token launch.
           </p>
 
           {query.isPending && (
@@ -132,8 +132,8 @@ export function McpView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...prop
               </div>
               {clawpumpDisabled && (
                 <p className="mt-3 text-sm text-muted-foreground">
-                  ClawPump MCP is installed but disabled. Re-enable it in MCP settings, then restart
-                  the session so the tools come online.
+                  ClawPump MCP is installed but disabled. Re-enable it in MCP settings, then restart the session so the
+                  tools come online.
                 </p>
               )}
               {clawpumpNeedsConnection && (
@@ -162,8 +162,8 @@ export function McpView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...prop
                     (isStaleBackend(login.error) ? (
                       <div className="space-y-2">
                         <p className="text-xs text-destructive">
-                          Your Claw Agent backend is out of date and doesn&apos;t support one-click
-                          login yet. Update it below, or connect right now from a terminal with{' '}
+                          Your Claw Agent backend is out of date and doesn&apos;t support one-click login yet. Update it
+                          below, or connect right now from a terminal with{' '}
                           <code className="rounded bg-muted px-1">claw clawpump login</code>.
                         </p>
                         <Button onClick={() => openUpdatesWindow()} size="sm" variant="outline">
@@ -172,9 +172,8 @@ export function McpView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...prop
                       </div>
                     ) : (
                       <p className="text-xs text-destructive">
-                        Login didn&apos;t complete: {(login.error as Error)?.message || 'unknown error'}.
-                        Try again, or run{' '}
-                        <code className="rounded bg-muted px-1">{clawpumpConnectCommand}</code>.
+                        Login didn&apos;t complete: {(login.error as Error)?.message || 'unknown error'}. Try again, or
+                        run <code className="rounded bg-muted px-1">{clawpumpConnectCommand}</code>.
                       </p>
                     ))}
                   {!clawpumpUsesStdio && (
@@ -209,8 +208,7 @@ export function McpView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...prop
           {!query.isPending && !clawpump && (
             <div className="space-y-2 rounded-lg border p-4">
               <p className="text-sm text-muted-foreground">
-                The ClawPump MCP isn&apos;t installed yet. Connect it at the gateway to unlock the 133
-                tools.
+                The ClawPump MCP isn&apos;t installed yet. Connect it at the gateway to unlock the 133 tools.
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <Button onClick={openGateway} size="sm">
@@ -226,10 +224,7 @@ export function McpView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...prop
             <div className="space-y-2">
               <h2 className="text-sm font-medium text-muted-foreground">Other servers</h2>
               {others.map(s => (
-                <div
-                  className="flex items-center justify-between rounded-md border px-3 py-2"
-                  key={s.name}
-                >
+                <div className="flex items-center justify-between rounded-md border px-3 py-2" key={s.name}>
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium">{s.name}</span>
                     <span className="text-xs text-muted-foreground">{s.transport}</span>

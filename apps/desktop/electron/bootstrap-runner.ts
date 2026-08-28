@@ -234,6 +234,7 @@ function downloadInstallScript(ref, destPath) {
   // placeholder is a real GitHub commit.
   const scriptName = installScriptName()
   const url = `https://raw.githubusercontent.com/Clawpump/claw-agent/${ref}/scripts/${scriptName}`
+
   return new Promise((resolve, reject) => {
     fs.mkdirSync(path.dirname(destPath), { recursive: true })
     const tmpPath = destPath + '.tmp'

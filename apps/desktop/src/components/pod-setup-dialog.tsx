@@ -14,7 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 const DEFAULT_AMOUNT = '5'
 
 const walletLabel = (w: PodWallet) =>
-  (w.name || (w.wallet_address ? `${w.wallet_address.slice(0, 4)}…${w.wallet_address.slice(-4)}` : w.agent_id)) ?? w.agent_id
+  (w.name || (w.wallet_address ? `${w.wallet_address.slice(0, 4)}…${w.wallet_address.slice(-4)}` : w.agent_id)) ??
+  w.agent_id
 
 /**
  * One-screen Pod setup: pick a ClawPump agent wallet, pick an amount, confirm.
@@ -32,6 +33,7 @@ export function PodSetupDialog({
   onProvisioned: (model: string) => void
 }) {
   const queryClient = useQueryClient()
+
   const wallets = useQuery({
     queryKey: ['pod-wallets'],
     queryFn: getPodWallets,
@@ -44,6 +46,7 @@ export function PodSetupDialog({
   const [amount, setAmount] = useState(DEFAULT_AMOUNT)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
   // Set once provisioning succeeds → switches the dialog to a "Pod ready" view.
   const [done, setDone] = useState<{ model: string; amount: number; signature?: string; fundingError?: string } | null>(
     null
@@ -78,12 +81,16 @@ export function PodSetupDialog({
 
     setBusy(true)
     setError(null)
+
     try {
       const res = await provisionPod(agentId, amountNum)
+
       if (!res.ok || !res.model) {
         setError(res.error || res.funding_error || 'Pod setup failed. Check the wallet balance and try again.')
+
         return
       }
+
       onProvisioned(res.model)
       // Refresh the "connected" badges so Pod flips from "Set up" to "Connected".
       void queryClient.invalidateQueries({ queryKey: ['pod-status'] })
@@ -93,7 +100,12 @@ export function PodSetupDialog({
         title: 'Pod ready',
         message: `Funded $${amountNum.toFixed(2)} USDC — Pod is now your model provider.`
       })
-      setDone({ amount: amountNum, fundingError: res.funding_error || undefined, model: res.model, signature: res.signature })
+      setDone({
+        amount: amountNum,
+        fundingError: res.funding_error || undefined,
+        model: res.model,
+        signature: res.signature
+      })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Pod setup failed.')
     } finally {
@@ -108,7 +120,9 @@ export function PodSetupDialog({
           <>
             <DialogHeader className="border-b border-border px-4 py-3">
               <DialogTitle className="flex items-center gap-2">
-                <span className="grid size-7 place-items-center rounded-full bg-emerald-500/20 text-emerald-300">✓</span>
+                <span className="grid size-7 place-items-center rounded-full bg-emerald-500/20 text-emerald-300">
+                  ✓
+                </span>
                 Pod ready
               </DialogTitle>
               <DialogDescription className="text-xs leading-relaxed">
@@ -148,80 +162,82 @@ export function PodSetupDialog({
           </>
         ) : (
           <>
-        <DialogHeader className="border-b border-border px-4 py-3">
-          <DialogTitle>Set up Pod</DialogTitle>
-          <DialogDescription className="text-xs leading-relaxed">
-            Fund a private inference Pod from a ClawPump agent wallet and use it as your model provider. You only pay for
-            what you use — the Pod holds a prepaid USDC balance.
-          </DialogDescription>
-        </DialogHeader>
+            <DialogHeader className="border-b border-border px-4 py-3">
+              <DialogTitle>Set up Pod</DialogTitle>
+              <DialogDescription className="text-xs leading-relaxed">
+                Fund a private inference Pod from a ClawPump agent wallet and use it as your model provider. You only
+                pay for what you use — the Pod holds a prepaid USDC balance.
+              </DialogDescription>
+            </DialogHeader>
 
-        <div className="flex flex-col gap-4 p-4">
-          {wallets.isLoading ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <GlyphSpinner /> Loading your wallets…
-            </div>
-          ) : rows.length === 0 ? (
-            <InlineNotice kind="warning">
-              {wallets.data?.error || 'No ClawPump agent wallets found. Create one in the ClawPump dashboard first.'}
-            </InlineNotice>
-          ) : (
-            <>
-              <label className="flex flex-col gap-1.5 text-sm">
-                <span className="font-medium">Pay from wallet</span>
-                <Select onValueChange={setAgentId} value={agentId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Choose an agent wallet" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {rows.map(w => (
-                      <SelectItem key={w.agent_id} value={w.agent_id}>
-                        {walletLabel(w)} — ${(w.usdc_balance ?? 0).toFixed(2)} USDC
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </label>
-
-              <label className="flex flex-col gap-1.5 text-sm">
-                <span className="font-medium">Amount to fund (USDC)</span>
-                <Input
-                  inputMode="decimal"
-                  min="0"
-                  onChange={e => setAmount(e.target.value)}
-                  step="1"
-                  type="number"
-                  value={amount}
-                />
-                <span className="text-xs text-muted-foreground">
-                  Wallet balance: <span className="font-mono">${balance.toFixed(2)} USDC</span>
-                </span>
-              </label>
-
-              {insufficient && (
+            <div className="flex flex-col gap-4 p-4">
+              {wallets.isLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <GlyphSpinner /> Loading your wallets…
+                </div>
+              ) : rows.length === 0 ? (
                 <InlineNotice kind="warning">
-                  Not enough USDC in this wallet for ${amountNum.toFixed(2)}. Pick a smaller amount or fund the wallet.
+                  {wallets.data?.error ||
+                    'No ClawPump agent wallets found. Create one in the ClawPump dashboard first.'}
                 </InlineNotice>
-              )}
-              {error && <InlineNotice kind="error">{error}</InlineNotice>}
-            </>
-          )}
-        </div>
+              ) : (
+                <>
+                  <label className="flex flex-col gap-1.5 text-sm">
+                    <span className="font-medium">Pay from wallet</span>
+                    <Select onValueChange={setAgentId} value={agentId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choose an agent wallet" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {rows.map(w => (
+                          <SelectItem key={w.agent_id} value={w.agent_id}>
+                            {walletLabel(w)} — ${(w.usdc_balance ?? 0).toFixed(2)} USDC
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </label>
 
-        <DialogFooter className="flex-row items-center justify-end gap-2 bg-card p-3">
-          <Button disabled={busy} onClick={() => onOpenChange(false)} variant="outline">
-            Cancel
-          </Button>
-          <Button disabled={!canFund} onClick={fund}>
-            {busy ? (
-              <span className="flex items-center gap-2">
-                <GlyphSpinner /> Funding Pod…
-              </span>
-            ) : (
-              `Fund $${Number.isFinite(amountNum) ? amountNum.toFixed(0) : '0'} & use Pod`
-            )}
-          </Button>
-        </DialogFooter>
+                  <label className="flex flex-col gap-1.5 text-sm">
+                    <span className="font-medium">Amount to fund (USDC)</span>
+                    <Input
+                      inputMode="decimal"
+                      min="0"
+                      onChange={e => setAmount(e.target.value)}
+                      step="1"
+                      type="number"
+                      value={amount}
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      Wallet balance: <span className="font-mono">${balance.toFixed(2)} USDC</span>
+                    </span>
+                  </label>
+
+                  {insufficient && (
+                    <InlineNotice kind="warning">
+                      Not enough USDC in this wallet for ${amountNum.toFixed(2)}. Pick a smaller amount or fund the
+                      wallet.
+                    </InlineNotice>
+                  )}
+                  {error && <InlineNotice kind="error">{error}</InlineNotice>}
+                </>
+              )}
+            </div>
+
+            <DialogFooter className="flex-row items-center justify-end gap-2 bg-card p-3">
+              <Button disabled={busy} onClick={() => onOpenChange(false)} variant="outline">
+                Cancel
+              </Button>
+              <Button disabled={!canFund} onClick={fund}>
+                {busy ? (
+                  <span className="flex items-center gap-2">
+                    <GlyphSpinner /> Funding Pod…
+                  </span>
+                ) : (
+                  `Fund $${Number.isFinite(amountNum) ? amountNum.toFixed(0) : '0'} & use Pod`
+                )}
+              </Button>
+            </DialogFooter>
           </>
         )}
       </DialogContent>

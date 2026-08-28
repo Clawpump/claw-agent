@@ -18,6 +18,7 @@ const bestPrice = (r: X402Result): string => r.pricing?.find(p => p.priceLabel)?
 const buildPrompt = (r: X402Result): string => {
   const label = r.name || r.host || 'this service'
   const price = bestPrice(r)
+
   return `Use this x402 API and pay it with my ClawPump wallet: ${r.resourceUrl} (${label}${price ? `, ${price}` : ''}). First check what inputs it needs, then call it.`
 }
 
@@ -34,10 +35,13 @@ export function X402View({ setStatusbarItemGroup: _setStatusbarItemGroup, ...pro
 
   const run = async () => {
     const q = query.trim()
+
     if (!q || loading) {
       return
     }
+
     setLoading(true)
+
     try {
       const res = await searchX402(q)
       setResults(res.results ?? [])

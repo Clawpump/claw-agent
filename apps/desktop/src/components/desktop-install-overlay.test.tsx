@@ -167,7 +167,9 @@ describe('DesktopInstallOverlay first-run setup', () => {
       await Promise.resolve()
     })
 
-    expect(screen.queryByText('Local installation could not start. Restart Claw Agent Desktop and try again.')).toBeTruthy()
+    expect(
+      screen.queryByText('Local installation could not start. Restart Claw Agent Desktop and try again.')
+    ).toBeTruthy()
   })
 
   it('clears a stale local-start error when a repair presents a different root', async () => {
@@ -194,7 +196,9 @@ describe('DesktopInstallOverlay first-run setup', () => {
       })
     })
 
-    expect(screen.queryByText('Local installation could not start. Restart Claw Agent Desktop and try again.')).toBeNull()
+    expect(
+      screen.queryByText('Local installation could not start. Restart Claw Agent Desktop and try again.')
+    ).toBeNull()
   })
 
   it('opens the remote connection form from the first-run choice', async () => {

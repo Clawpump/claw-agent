@@ -88,7 +88,9 @@ function waitForDashboardPort(child, timeoutMs = resolvePortAnnounceTimeoutMs(),
 
     function onExit(code, signal) {
       cleanup()
-      reject(new Error(`Claw Agent backend: exited before port announcement (${signal || code})${describeOutputTail()}`))
+      reject(
+        new Error(`Claw Agent backend: exited before port announcement (${signal || code})${describeOutputTail()}`)
+      )
     }
 
     function onError(err) {
@@ -159,7 +161,9 @@ function waitForDashboardReadyFile(
 
     function onExit(code, signal) {
       cleanup()
-      reject(new Error(`Claw Agent backend: exited before port announcement (${signal || code})${describeOutputTail()}`))
+      reject(
+        new Error(`Claw Agent backend: exited before port announcement (${signal || code})${describeOutputTail()}`)
+      )
     }
 
     function onError(err) {

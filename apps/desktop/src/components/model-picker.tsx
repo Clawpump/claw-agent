@@ -199,6 +199,7 @@ function ModelResults({
   // Selecting it opens the one-confirm setup dialog (fund from a wallet) rather
   // than switching models directly — Pod has no model until it's provisioned.
   const podVisible = !q || 'pod usepod pay-as-you-go wallet clawpump'.includes(q)
+
   const podRow = podVisible ? (
     <CommandGroup heading="ClawPump" key="clawpump-pod">
       <CommandItem

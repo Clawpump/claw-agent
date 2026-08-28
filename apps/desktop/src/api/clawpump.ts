@@ -161,7 +161,11 @@ export function readMail(messageId: string, agentId: string): Promise<MailMessag
   })
 }
 
-export function createInbox(body: { agent_id: string; username?: string; confirm: boolean }): Promise<MailCreateResponse> {
+export function createInbox(body: {
+  agent_id: string
+  username?: string
+  confirm: boolean
+}): Promise<MailCreateResponse> {
   return hermesApi({ ...profileScoped(), path: '/api/mail/create', method: 'POST', body, timeoutMs: 120_000 })
 }
 
