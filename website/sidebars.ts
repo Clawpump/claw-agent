@@ -612,6 +612,7 @@ const sidebars: SidebarsConfig = {
                   items: [
                     'user-guide/skills/optional/web-development/web-development-cloudflare-temporary-deploy',
                     'user-guide/skills/optional/web-development/web-development-page-agent',
+                    'user-guide/skills/optional/web-development/web-development-publish-site',
                   ],
                 },
                 {
@@ -790,6 +791,7 @@ const sidebars: SidebarsConfig = {
                 'developer-guide/video-gen-provider-plugin',
                 'developer-guide/web-search-provider-plugin',
                 'developer-guide/browser-provider-plugin',
+                'developer-guide/terminal-environment-plugin',
               ],
             },
             'developer-guide/creating-skills',

@@ -285,7 +285,10 @@ def _is_post_tool_replay(messages: Optional[List[Dict[str, Any]]]) -> bool:
     legacy sessions and host-fed histories still use, and let the rejected
     payload through.
     """
-    from agent.codex_responses_adapter import _split_responses_tool_id
+    from agent.codex_responses_adapter import (
+        _canonical_call_id_from_fc,
+        _split_responses_tool_id,
+    )
 
     def _pair_ids(raw: Any, explicit: Any = None) -> set:
         """Every call id a stored tool id could pair on, converter-order."""
@@ -295,8 +298,9 @@ def _is_post_tool_replay(messages: Optional[List[Dict[str, Any]]]) -> bool:
             ids.add(explicit.strip())
         if not ids and isinstance(raw, str) and raw.strip():
             ids.add(raw.strip())
-        if isinstance(item_id, str) and item_id.startswith("fc_") and item_id[3:]:
-            ids.add(f"call_{item_id[3:]}")
+        canonical = _canonical_call_id_from_fc(item_id)
+        if canonical:
+            ids.add(canonical)
         return ids
 
     trailing = set()
@@ -567,8 +571,17 @@ class ResponsesApiTransport(ProviderTransport):
         # request is issued (openai==2.24.0).  Reported for the
         # ``openai-codex`` / ``gpt-5.5`` combo on chatgpt.com/backend-api/codex
         # (#32892) when the agent runs without external tools registered.
+        # Function-level import: agent.model_metadata is imported lazily
+        # because provider plugins import this transport during
+        # model_metadata's own module init (circular otherwise).
+        from agent.model_metadata import (
+            strip_codex_context_variant_suffix as _strip_ctx_variant,
+        )
         kwargs = {
-            "model": model,
+            # ``-900k`` large-context picker variants are Hermes-side aliases
+            # (gpt-5.6-sol-900k etc.) — the Codex/OpenAI backend only knows
+            # the base slug, so strip the suffix before it hits the wire.
+            "model": _strip_ctx_variant(model),
             "instructions": instructions,
             "input": _chat_messages_to_responses_input(
                 payload_messages,

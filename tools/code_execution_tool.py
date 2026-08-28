@@ -552,17 +552,34 @@ def _call(tool_name, args):
         "args": args,
         "token": os.environ.get("HERMES_RPC_TOKEN", ""),
     }) + "\\n"
+    # Session kernels outlive the RPC server's 300s idle window, so their
+    # connection can be legitimately gone by the next cell. The server
+    # re-accepts (HERMES_RPC_PERSISTENT=1); retry once on a fresh socket.
+    _attempts = 2 if os.environ.get("HERMES_RPC_PERSISTENT") == "1" else 1
     with _call_lock:
-        conn = _connect()
-        conn.sendall(request.encode())
-        buf = b""
-        while True:
-            chunk = conn.recv(65536)
-            if not chunk:
-                raise RuntimeError("Agent process disconnected")
-            buf += chunk
-            if buf.endswith(b"\\n"):
+        for _attempt in range(_attempts):
+            try:
+                conn = _connect()
+                conn.sendall(request.encode())
+                buf = b""
+                while True:
+                    chunk = conn.recv(65536)
+                    if not chunk:
+                        raise RuntimeError("Agent process disconnected")
+                    buf += chunk
+                    if buf.endswith(b"\\n"):
+                        break
                 break
+            except (OSError, RuntimeError):
+                global _sock
+                try:
+                    if _sock is not None:
+                        _sock.close()
+                except OSError:
+                    pass
+                _sock = None
+                if _attempt + 1 >= _attempts:
+                    raise
     raw = buf.decode().strip()
     result = json.loads(raw)
     if isinstance(result, str):
@@ -646,7 +663,7 @@ def _call(tool_name, args):
 # ---------------------------------------------------------------------------
 
 # Terminal parameters that must not be used from ephemeral sandbox scripts
-_TERMINAL_BLOCKED_PARAMS = {"background", "pty", "notify_on_complete", "watch_patterns"}
+_TERMINAL_BLOCKED_PARAMS = {"background", "pty", "notify", "notify_on_complete", "watch_patterns"}
 
 
 def _rpc_server_loop(
@@ -658,12 +675,24 @@ def _rpc_server_loop(
     allowed_tools: frozenset,
     stop_event: threading.Event,
     rpc_token: str,
+    dispatch=None,
 ):
     """
     Accept one client connection and dispatch tool-call requests until
     the client disconnects or the call limit is reached.
+
+    ``dispatch`` overrides how an allowed, budgeted call is executed:
+    per-call sandboxes use the default (this thread already carries the
+    cell's context via propagate_context_to_thread), while session kernels
+    pass a dispatcher that rebinds each call to the CURRENT cell's
+    authority — the serving thread outlives many cells there and must not
+    freeze the first cell's context.
     """
     from model_tools import handle_function_call
+
+    if dispatch is None:
+        def dispatch(tool_name, tool_args):
+            return handle_function_call(tool_name, tool_args, task_id=task_id)
 
     conn = None
     try:
@@ -745,9 +774,7 @@ def _rpc_server_loop(
                 # their status prints don't leak into the CLI spinner.
                 try:
                     with thread_scoped_silence():
-                        result = handle_function_call(
-                            tool_name, tool_args, task_id=task_id
-                        )
+                        result = dispatch(tool_name, tool_args)
                 except Exception as exc:
                     logger.error("Tool call failed in sandbox: %s", exc, exc_info=True)
                     result = tool_error(str(exc))
@@ -833,7 +860,9 @@ def _get_or_create_env(task_id: str):
         cwd = overrides.get("cwd") or config["cwd"]
 
         container_config = None
-        if env_type in {"docker", "singularity", "modal", "daytona", "vercel_sandbox"}:
+        from tools.terminal_tool import _is_container_backend as _is_container
+
+        if _is_container(env_type):
             container_config = {
                 "container_cpu": config.get("container_cpu", 1),
                 "container_memory": config.get("container_memory", 5120),
@@ -1060,6 +1089,19 @@ def _rpc_poll_loop(
             stop_event.wait(poll_interval)
 
 
+def _format_interrupted_output(stdout_text: str) -> str:
+    """Append an interruption marker without guessing who caused it."""
+    from tools.interrupt import get_interrupt_reason
+
+    reason = get_interrupt_reason()
+    marker = (
+        f"[execution interrupted — {reason}]"
+        if reason
+        else "[execution interrupted]"
+    )
+    return f"{stdout_text}\n{marker}" if stdout_text else marker
+
+
 def _execute_remote(
     code: str,
     task_id: Optional[str],
@@ -1238,9 +1280,7 @@ def _execute_remote(
             duration, timeout, tool_call_counter[0],
         )
     elif status == "interrupted":
-        result["output"] = (
-            stdout_text + "\n[execution interrupted — user sent a new message]"
-        )
+        result["output"] = _format_interrupted_output(stdout_text)
     elif exit_code != 0:
         result["status"] = "error"
         result["error"] = f"Script exited with code {exit_code}"
@@ -1252,10 +1292,91 @@ def _execute_remote(
 # Main entry point
 # ---------------------------------------------------------------------------
 
+def _build_child_env(*, rpc_endpoint: str, rpc_token: str, tmpdir: str,
+                     child_python: str) -> Dict[str, str]:
+    """Build the scrubbed child environment both execution paths share.
+
+    Extracted verbatim from the per-call spawn path so the session-kernel
+    path (tools/code_kernel.py) cannot drift from the security rules here:
+    secret scrubbing, UTF-8 forcing, TZ handling, subprocess HOME, and the
+    PYTHONPATH hygiene for external interpreters.
+    """
+    from hermes_constants import apply_subprocess_home_env
+    child_env = _scrub_child_env(os.environ)
+    child_env["HERMES_RPC_SOCKET"] = rpc_endpoint
+    child_env["HERMES_RPC_TOKEN"] = rpc_token
+    child_env["PYTHONDONTWRITEBYTECODE"] = "1"
+    # Force UTF-8 for the child's stdio and default file encoding.
+    #
+    # Without this, on Windows sys.stdout is bound to the console code
+    # page (cp1252 on US-locale installs), and any script that does
+    # ``print("café")`` or ``print("→")`` crashes with:
+    #
+    #   UnicodeEncodeError: 'charmap' codec can't encode character
+    #   '\u2192' in position N: character maps to <undefined>
+    #
+    # PYTHONIOENCODING fixes sys.stdin/stdout/stderr.
+    # PYTHONUTF8=1 enables "UTF-8 mode" (PEP 540) which additionally
+    # makes ``open()``'s default encoding UTF-8, so user scripts that
+    # write files without specifying encoding= also work correctly.
+    #
+    # On POSIX both values usually match the locale default already,
+    # so setting them is harmless belt-and-suspenders for environments
+    # with a C/POSIX locale (containers, minimal base images).
+    child_env["PYTHONIOENCODING"] = "utf-8"
+    child_env["PYTHONUTF8"] = "1"
+    # Inject user's configured timezone so datetime.now() in sandboxed
+    # code reflects the correct wall-clock time.  Only TZ is set —
+    # HERMES_TIMEZONE is an internal Hermes setting and must not leak
+    # into child processes.
+    _tz_name = os.getenv("HERMES_TIMEZONE", "").strip()
+    if _tz_name:
+        child_env["TZ"] = _tz_name
+    child_env.pop("HERMES_TIMEZONE", None)
+
+    apply_subprocess_home_env(child_env)
+    # ``hermes_tools.py`` always lives in the staging directory, so that
+    # directory must be importable even when project mode changes CWD.
+    # Hermes's own package root is useful too, but only when the child
+    # uses the same Python environment. Project mode can select an
+    # external venv; exposing Hermes's site-packages to that interpreter
+    # can mix incompatible compiled extensions (for example, Python 3.12
+    # NumPy with a Python 3.9 project interpreter).
+    #
+    # Before re-injecting PYTHONPATH, strip Hermes-owned entries that
+    # leaked through _scrub_child_env (PYTHONPATH is in _SAFE_ENV_PREFIXES
+    # so it passes the scrub).  They are redundant for same-Hermes-
+    # environment children and may be incompatible with external
+    # interpreters (project mode can select a different venv), so they
+    # must not shadow or poison the child's sys.path (#74817).
+    from tools.environments.local import _strip_hermes_owned_pythonpath
+    _strip_hermes_owned_pythonpath(child_env)
+    _hermes_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _existing_pp = child_env.get("PYTHONPATH", "")
+    _pp_parts = [tmpdir]
+    if _uses_hermes_python_environment(child_python):
+        _pp_parts.append(_hermes_root)
+    elif child_python not in _external_env_logged:
+        # Import behavior changes silently otherwise — surface it (once
+        # per interpreter path) so "import hermes_constants suddenly
+        # fails" reports are diagnosable without log spam.
+        _external_env_logged.add(child_python)
+        logger.info(
+            "execute_code: child interpreter %s is outside the Hermes "
+            "environment; hermes root omitted from PYTHONPATH",
+            child_python,
+        )
+    if _existing_pp:
+        _pp_parts.append(_existing_pp)
+    child_env["PYTHONPATH"] = os.pathsep.join(_pp_parts)
+    return child_env
+
+
 def execute_code(
     code: str,
     task_id: Optional[str] = None,
     enabled_tools: Optional[List[str]] = None,
+    reset: bool = False,
 ) -> str:
     """
     Run a Python script in a sandboxed child process with RPC access
@@ -1269,6 +1390,9 @@ def execute_code(
         task_id:       Session task ID for tool isolation (terminal env, etc.).
         enabled_tools: Tool names enabled in the current session. The sandbox
                        gets the intersection with SANDBOX_ALLOWED_TOOLS.
+        reset:         Session-kernel mode only: kill the existing kernel and
+                       start fresh before running this code. Ignored in
+                       per-call mode, where every call is already fresh.
 
     Returns:
         JSON string with execution results.
@@ -1285,6 +1409,23 @@ def execute_code(
             "parameter containing Python source. To run shell commands, use "
             "terminal(command=...) instead."
         )
+
+    # Hard-block gateway-lifecycle commands, mirroring the terminal_tool
+    # guard (#68289): without this, execute_code is a straight bypass — the
+    # terminal() path refuses `launchctl bootout ai.hermes.gateway`, but the
+    # identical command inside `os.system(...)` / `subprocess.run([...])`
+    # here sailed through and SIGTERM'd the gateway mid-task. Gated on
+    # PID-file ownership, not the inherited env marker (#92560).
+    from tools.process_registry import _is_supervised_gateway_process
+    if _is_supervised_gateway_process():
+        from cron.lifecycle_guard import contains_gateway_lifecycle_command
+        if contains_gateway_lifecycle_command(code):
+            return tool_error(
+                "Blocked: cannot restart or stop the gateway from inside the "
+                "gateway process. The gateway would kill this script before "
+                "it could complete (SIGTERM propagates to child processes). "
+                "Run the lifecycle command from a shell outside the gateway."
+            )
 
     # Dispatch: remote backends use file-based RPC, local uses UDS
     from tools.terminal_tool import _get_env_config, _docker_has_host_access
@@ -1339,6 +1480,26 @@ def execute_code(
 
     if not sandbox_tools:
         sandbox_tools = SANDBOX_ALLOWED_TOOLS
+
+    if _get_kernel_mode() == "session":
+        # Session kernels keep one interpreter alive across calls; the guards
+        # above already ran for this cell, and the kernel path reuses the
+        # same env builder, RPC server, and output redaction as below.
+        from tools.code_kernel import execute_in_session_kernel
+
+        _mode = _get_execution_mode()
+        return execute_in_session_kernel(
+            code,
+            task_id=task_id or "",
+            mode=_mode,
+            child_python=_resolve_child_python(_mode),
+            child_cwd=_resolve_child_cwd(_mode, "", task_id=task_id or ""),
+            sandbox_tools=frozenset(sandbox_tools),
+            timeout=timeout,
+            max_tool_calls=max_tool_calls,
+            reset=bool(reset),
+            is_interrupted=_is_interrupted,
+        )
 
     # --- Set up temp directory with hermes_tools.py and script.py ---
     tmpdir = tempfile.mkdtemp(prefix="hermes_sandbox_")
@@ -1431,40 +1592,6 @@ def execute_code(
         # OS-essential allowlist (SYSTEMROOT, WINDIR, COMSPEC, ...) is also
         # passed through — without those, the child can't create a socket
         # or spawn a subprocess.  See ``_scrub_child_env`` for the rules.
-        child_env = _scrub_child_env(os.environ)
-        child_env["HERMES_RPC_SOCKET"] = rpc_endpoint
-        child_env["HERMES_RPC_TOKEN"] = rpc_token
-        child_env["PYTHONDONTWRITEBYTECODE"] = "1"
-        # Force UTF-8 for the child's stdio and default file encoding.
-        #
-        # Without this, on Windows sys.stdout is bound to the console code
-        # page (cp1252 on US-locale installs), and any script that does
-        # ``print("café")`` or ``print("→")`` crashes with:
-        #
-        #   UnicodeEncodeError: 'charmap' codec can't encode character
-        #   '\u2192' in position N: character maps to <undefined>
-        #
-        # PYTHONIOENCODING fixes sys.stdin/stdout/stderr.
-        # PYTHONUTF8=1 enables "UTF-8 mode" (PEP 540) which additionally
-        # makes ``open()``'s default encoding UTF-8, so user scripts that
-        # write files without specifying encoding= also work correctly.
-        #
-        # On POSIX both values usually match the locale default already,
-        # so setting them is harmless belt-and-suspenders for environments
-        # with a C/POSIX locale (containers, minimal base images).
-        child_env["PYTHONIOENCODING"] = "utf-8"
-        child_env["PYTHONUTF8"] = "1"
-        # Inject user's configured timezone so datetime.now() in sandboxed
-        # code reflects the correct wall-clock time.  Only TZ is set —
-        # HERMES_TIMEZONE is an internal Hermes setting and must not leak
-        # into child processes.
-        _tz_name = os.getenv("HERMES_TIMEZONE", "").strip()
-        if _tz_name:
-            child_env["TZ"] = _tz_name
-        child_env.pop("HERMES_TIMEZONE", None)
-
-        from hermes_constants import apply_subprocess_home_env
-        apply_subprocess_home_env(child_env)
 
         # Resolve interpreter + CWD based on execute_code mode.
         #   - strict : today's behavior (sys.executable + tmpdir CWD).
@@ -1476,40 +1603,12 @@ def execute_code(
         _child_cwd = _resolve_child_cwd(_mode, tmpdir, task_id=task_id or "")
         _script_path = os.path.join(tmpdir, "script.py")
 
-        # ``hermes_tools.py`` always lives in the staging directory, so that
-        # directory must be importable even when project mode changes CWD.
-        # Hermes's own package root is useful too, but only when the child
-        # uses the same Python environment. Project mode can select an
-        # external venv; exposing Hermes's site-packages to that interpreter
-        # can mix incompatible compiled extensions (for example, Python 3.12
-        # NumPy with a Python 3.9 project interpreter).
-        #
-        # Before re-injecting PYTHONPATH, strip Hermes-owned entries that
-        # leaked through _scrub_child_env (PYTHONPATH is in _SAFE_ENV_PREFIXES
-        # so it passes the scrub).  They are redundant for same-Hermes-
-        # environment children and may be incompatible with external
-        # interpreters (project mode can select a different venv), so they
-        # must not shadow or poison the child's sys.path (#74817).
-        from tools.environments.local import _strip_hermes_owned_pythonpath
-        _strip_hermes_owned_pythonpath(child_env)
-        _hermes_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        _existing_pp = child_env.get("PYTHONPATH", "")
-        _pp_parts = [tmpdir]
-        if _uses_hermes_python_environment(_child_python):
-            _pp_parts.append(_hermes_root)
-        elif _child_python not in _external_env_logged:
-            # Import behavior changes silently otherwise — surface it (once
-            # per interpreter path) so "import hermes_constants suddenly
-            # fails" reports are diagnosable without log spam.
-            _external_env_logged.add(_child_python)
-            logger.info(
-                "execute_code: child interpreter %s is outside the Hermes "
-                "environment; hermes root omitted from PYTHONPATH",
-                _child_python,
-            )
-        if _existing_pp:
-            _pp_parts.append(_existing_pp)
-        child_env["PYTHONPATH"] = os.pathsep.join(_pp_parts)
+        child_env = _build_child_env(
+            rpc_endpoint=rpc_endpoint,
+            rpc_token=rpc_token,
+            tmpdir=tmpdir,
+            child_python=_child_python,
+        )
 
         proc = subprocess.Popen(
             [_child_python, _script_path],
@@ -1693,7 +1792,7 @@ def execute_code(
                 duration, timeout, tool_call_counter[0],
             )
         elif status == "interrupted":
-            result["output"] = stdout_text + "\n[execution interrupted — user sent a new message]"
+            result["output"] = _format_interrupted_output(stdout_text)
         elif exit_code != 0:
             result["status"] = "error"
             result["error"] = stderr_text or f"Script exited with code {exit_code}"
@@ -1745,53 +1844,40 @@ def execute_code(
 
 
 def _kill_process_group(proc, escalate: bool = False):
-    """Kill the child and its entire process tree (cross-platform via psutil)."""
-    import psutil
-    try:
-        parent = psutil.Process(proc.pid)
-        children = parent.children(recursive=True)
-        for child in children:
+    """Kill the child and its entire process tree (cross-platform).
+
+    Delegates to :func:`agent.deadline.kill_process_tree` (#85125 4d):
+    SIGTERM to the whole tree first (killpg when the child leads its own
+    group — it does, ``start_new_session=True`` — plus a psutil descendant
+    sweep for setsid'd grandchildren; ``taskkill /T /F`` on Windows).
+    With ``escalate=True`` the child gets 5s to exit after SIGTERM, then the
+    surviving tree is SIGKILLed — same escalation the old psutil-local body
+    implemented. Never raises; a delegation failure degrades to a plain
+    ``proc.kill()`` like the old psutil-failure fallback.
+    """
+    import signal as _signal
+
+    def _tree_signal(sig) -> None:
+        try:
+            from agent.deadline import kill_process_tree as _deadline_kill_tree
+
+            _deadline_kill_tree(proc.pid, sig=sig)
+        except Exception as e:
+            logger.debug("Could not terminate process tree: %s", e, exc_info=True)
             try:
-                child.terminate()
-            except psutil.NoSuchProcess:
-                pass
-        try:
-            parent.terminate()
-        except psutil.NoSuchProcess:
-            pass
-    except psutil.NoSuchProcess:
-        pass
-    except (PermissionError, OSError) as e:
-        logger.debug("Could not terminate process tree: %s", e, exc_info=True)
-        try:
-            proc.kill()
-        except Exception as e2:
-            logger.debug("Could not kill process: %s", e2, exc_info=True)
+                proc.kill()
+            except Exception as e2:
+                logger.debug("Could not kill process: %s", e2, exc_info=True)
+
+    # sig is ignored on Windows (taskkill /F is already forceful).
+    _tree_signal(getattr(_signal, "SIGTERM", None))
 
     if escalate:
         # Give the process 5s to exit after SIGTERM, then SIGKILL
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            try:
-                parent = psutil.Process(proc.pid)
-                for child in parent.children(recursive=True):
-                    try:
-                        child.kill()
-                    except psutil.NoSuchProcess:
-                        pass
-                try:
-                    parent.kill()
-                except psutil.NoSuchProcess:
-                    pass
-            except psutil.NoSuchProcess:
-                pass
-            except (PermissionError, OSError) as e:
-                logger.debug("Could not kill process tree: %s", e, exc_info=True)
-                try:
-                    proc.kill()
-                except Exception as e2:
-                    logger.debug("Could not kill process: %s", e2, exc_info=True)
+            _tree_signal(getattr(_signal, "SIGKILL", None))
 
 
 def _load_config() -> dict:
@@ -1821,6 +1907,20 @@ def _load_config() -> dict:
 # and the config layer can reference the canonical set.
 EXECUTION_MODES = ("project", "strict")
 DEFAULT_EXECUTION_MODE = "project"
+
+# Valid values for code_execution.kernel_mode.
+#   per-call : today's behavior — a fresh child process per execute_code call.
+#   session  : one persistent kernel per (task, mode, interpreter, cwd,
+#              tool-set); variables and imports survive across calls. See
+#              tools/code_kernel.py for the design and its boundaries.
+KERNEL_MODES = ("per-call", "session")
+DEFAULT_KERNEL_MODE = "per-call"
+
+
+def _get_kernel_mode() -> str:
+    """Return the active execute_code kernel mode — 'per-call' or 'session'."""
+    value = _load_config().get("kernel_mode", DEFAULT_KERNEL_MODE)
+    return value if value in KERNEL_MODES else DEFAULT_KERNEL_MODE
 
 
 def _get_execution_mode() -> str:
@@ -2120,6 +2220,14 @@ def build_execute_code_schema(enabled_sandbox_tools: set = None,
             "so project deps (pandas, etc.) and relative paths work like in terminal()."
         )
 
+    kernel_note = ""
+    if _get_kernel_mode() == "session":
+        kernel_note = (
+            "\n\nSession kernel is active: variables, imports, and loaded "
+            "data persist across execute_code calls in this session. Pass "
+            "reset=true to discard that state. A timed-out or interrupted "
+            "cell kills the kernel and loses its state."
+        )
     description = (
         "Run a Python script that calls Hermes tools programmatically. "
         "Use when you need 3+ tool calls with logic between them: "
@@ -2137,6 +2245,7 @@ def build_execute_code_schema(enabled_sandbox_tools: set = None,
         "Built-in helpers (no import): json_parse(text) — tolerant json.loads for "
         "terminal() output; shell_quote(s) — shlex.quote for dynamic shell args; "
         "retry(fn, max_attempts=3, delay=2) — exponential backoff for transient failures."
+        + kernel_note
     )
 
     return {
@@ -2151,6 +2260,14 @@ def build_execute_code_schema(enabled_sandbox_tools: set = None,
                         "Python code to execute. Import tools with "
                         f"`from hermes_tools import {import_str}` "
                         "and print your final result to stdout."
+                    ),
+                },
+                "reset": {
+                    "type": "boolean",
+                    "description": (
+                        "Session-kernel mode only: discard the persistent "
+                        "kernel's state and start fresh before running this "
+                        "code. Ignored in per-call mode."
                     ),
                 },
             },
@@ -2200,6 +2317,7 @@ def _execute_code_handler(args: dict, **kwargs) -> str:
         code=code or "",
         task_id=kwargs.get("task_id"),
         enabled_tools=kwargs.get("enabled_tools"),
+        reset=bool(args.get("reset", False)),
     )
 
 
