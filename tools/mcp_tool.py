@@ -4640,7 +4640,8 @@ def _annotation_read_only_hint(mcp_tool: Any) -> bool:
     if isinstance(annotations, dict):
         hint = annotations.get("readOnlyHint")
     else:
-        hint = getattr(annotations, "readOnlyHint", None)
+        # mcp >= 2.0 names the SDK field ``read_only_hint``; ``readOnlyHint`` is only its wire alias.
+        hint = mcp_field(annotations, "read_only_hint", "readOnlyHint")
     return hint is True
 
 

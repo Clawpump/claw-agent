@@ -245,3 +245,65 @@ class TestAnnotationCaptureAtDiscovery:
         assert mcp_tool._annotation_read_only_hint(
             SimpleNamespace()
         ) is False
+
+    def test_sdk_annotation_objects_are_read_on_the_snake_case_field(self):
+        """Live discovery hands us ``mcp.types.Tool`` objects. mcp >= 2.0 names
+        the annotation field ``read_only_hint`` and keeps ``readOnlyHint`` only
+        as a serialization alias, which ``getattr`` does not see — so every
+        read-only tool on an ``untrusted`` server was recorded write-capable
+        and asked for consent on each call."""
+        pytest.importorskip("mcp")
+        from mcp.types import Tool, ToolAnnotations
+
+        def _tool(name, **ann):
+            return Tool(
+                name=name, inputSchema={"type": "object"},
+                annotations=ToolAnnotations(**ann) if ann else None,
+            )
+
+        assert mcp_tool._annotation_read_only_hint(
+            _tool("read", read_only_hint=True)
+        ) is True
+        # The wire spelling validates through the alias onto the same field.
+        assert mcp_tool._annotation_read_only_hint(Tool.model_validate({
+            "name": "wire", "inputSchema": {"type": "object"},
+            "annotations": {"readOnlyHint": True},
+        })) is True
+        assert mcp_tool._annotation_read_only_hint(
+            _tool("write", read_only_hint=False)
+        ) is False
+        assert mcp_tool._annotation_read_only_hint(
+            _tool("unset", destructive_hint=False)
+        ) is False
+        assert mcp_tool._annotation_read_only_hint(_tool("none")) is False
+
+    def test_registration_records_sdk_read_only_hints(self):
+        """Through _register_server_tools with real SDK objects: the read-only
+        tool is recorded True, the write tool and the unannotated one stay
+        write-capable."""
+        pytest.importorskip("mcp")
+        from mcp.types import Tool, ToolAnnotations
+        from tools.registry import ToolRegistry
+
+        server = mcp_tool.MCPServerTask("sdk-srv")
+        server.session = MagicMock()
+        server._tools = [
+            Tool(name="list_assets", inputSchema={"type": "object"},
+                 annotations=ToolAnnotations(read_only_hint=True)),
+            Tool(name="create_portfolio", inputSchema={"type": "object"},
+                 annotations=ToolAnnotations(read_only_hint=False)),
+            Tool(name="send_signed", inputSchema={"type": "object"}),
+        ]
+        config = {
+            "trust": "untrusted",
+            "tools": {"resources": False, "prompts": False},
+        }
+        with patch("tools.registry.registry", ToolRegistry()), \
+             patch("tools.mcp_tool._track_mcp_tool_server"):
+            mcp_tool._register_server_tools("sdk-srv", server, config)
+
+        hints = mcp_tool._tool_read_only_hints["sdk-srv"]
+        assert hints.get("list_assets") is True
+        assert hints.get("create_portfolio") is False
+        assert hints.get("send_signed") is False
+
