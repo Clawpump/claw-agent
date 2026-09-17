@@ -70,12 +70,15 @@ post_install: |
       resources: false      # weavr's cards are for MCP Apps hosts; Hermes
       prompts: false        # would hand the model raw HTML otherwise
 
-  Signing happens on this machine, never in chat. It needs the PayBox CLI
-  (npm i @paybox-sh/sdk, then `paybox login`) and weavr's wallet tool, with
-  the variables the bundled skill names (PAYBOX_CONFIG_DIR,
-  PAYBOX_CREDENTIAL_ID, PAYBOX_CLI, WEAVR_SIGN_TOOL) set in ~/.hermes/.env.
-  The wallet signs whatever the tool lets through: keep it small. The bundled
-  skill (/weavr) carries the flow: thesis → assets → mix → simulate → create
-  → sign → live.
+  Signing never happens in chat. The bundled skill (/weavr) carries the
+  flow (thesis → assets → mix → simulate → create → sign → live) and knows
+  three ways to sign. With nothing else set up, the agent sends the owner a
+  sign link and they sign in a browser wallet. With weavr's wallet tool on
+  this machine (https://github.com/desync-labs/weavr-claw-agent, set
+  WEAVR_SIGN_TOOL in ~/.hermes/.env) the agent signs here, through either
+  the PayBox CLI (a real wallet: the key stays off the box and a human
+  approves each signature) or a local keypair file (a dedicated small key
+  that lives on the box). The wallet signs whatever the tool lets through:
+  keep it small.
 
   Start a new Hermes session to load the weavr tools.
