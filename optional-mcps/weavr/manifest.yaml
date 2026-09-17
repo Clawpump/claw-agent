@@ -1,0 +1,84 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: weavr
+description: "weavr — onchain portfolios from a thesis on Solana: assets, a suggested mix, simulation, then create, deposit and rebalance (30 tools)."
+source: https://www.weavr.sh
+
+# weavr ships a remote MCP server (Streamable HTTP) at api.weavr.sh. No
+# account and no key: anonymous callers get a per-caller budget on the
+# server side. Every tool answers in plain JSON; the sign / simulate cards it
+# also advertises as resources are for MCP Apps hosts and are not used here
+# (see post_install).
+transport:
+  type: http
+  url: https://api.weavr.sh/mcp
+
+auth:
+  type: none
+
+# Tool selection at install time.
+# weavr exposes 30 tools. 12 are read-only (readOnlyHint: true) and 18 build,
+# sign-and-send or confirm onchain transactions for the user's wallet:
+# create_portfolio, await_portfolio, send_signed, confirm_revive and the
+# fourteen build_* actions (deposit, withdraw, curator and rebalance moves).
+# Hermes does not gate MCP tools by their annotations unless the server is
+# marked `trust: untrusted`, so the default is read-only: the 11 tools below
+# are pre-checked in the install checklist (and applied directly when the
+# server cannot be probed). portfolio_status is left out on purpose — it is
+# the MCP Apps status card and adds nothing over get_portfolio on a text
+# host. Users opt into the signing tools in the checklist, or later with
+# `hermes mcp configure weavr`.
+tools:
+  default_enabled:
+    # assets and the thesis → mix step
+    - list_assets
+    - get_asset
+    - get_asset_history
+    - suggest_mix
+    # simulations (nothing is built or signed)
+    - simulate_portfolio
+    - simulate_rebalance
+    # the user's portfolios
+    - list_portfolios
+    - get_portfolio
+    - get_portfolio_history
+    - list_withdrawals
+    - get_withdrawal
+
+# Composer-suggestion triggers (desktop brand pills).
+suggest:
+  keywords:
+    - weavr
+    - portfolio
+    - thesis
+  hosts:
+    - weavr.sh
+
+post_install: |
+  Read tools are on. The signing tools (create_portfolio, await_portfolio,
+  send_signed, confirm_revive and the build_* actions) are OFF by default.
+  Enable the ones you want and review every call:
+    hermes mcp configure weavr
+
+  Two settings a manifest cannot carry — add them under mcp_servers.weavr in
+  ~/.hermes/config.yaml (ready-made snippet:
+  https://api.weavr.sh/hosts/hermes/config.snippet.yaml):
+    trust: untrusted        # write-capable calls ask before they run
+    tools:
+      resources: false      # weavr's cards are for MCP Apps hosts; Hermes
+      prompts: false        # would hand the model raw HTML otherwise
+
+  Signing never happens in chat. The bundled skill (/weavr) carries the
+  flow (thesis → assets → mix → simulate → create → sign → live) and knows
+  three ways to sign. With nothing else set up, the agent sends the owner a
+  sign link and they sign in a browser wallet. With weavr's wallet tool on
+  this machine (https://github.com/desync-labs/weavr-claw-agent, set
+  WEAVR_SIGN_TOOL in ~/.hermes/.env) the agent signs here, through either
+  the PayBox CLI (a real wallet: the key stays off the box and a human
+  approves each signature) or a local keypair file (a dedicated small key
+  that lives on the box). The wallet signs whatever the tool lets through:
+  keep it small.
+
+  Start a new Hermes session to load the weavr tools.
